@@ -1,0 +1,781 @@
+package tui
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/kzhuang/mini-golang-agent/internal/agent"
+	"github.com/kzhuang/mini-golang-agent/internal/config"
+	"github.com/kzhuang/mini-golang-agent/internal/llm"
+	"github.com/kzhuang/mini-golang-agent/internal/tools"
+)
+
+const (
+	maxInputHeight  = 10
+	liveStreamLines = 14
+)
+
+type viewKind int
+
+const (
+	viewChat viewKind = iota
+	viewModels
+	viewAgents
+	viewHome
+)
+
+type runningTool struct {
+	name    string
+	summary string
+	args    string
+}
+
+type pendingApproval struct {
+	req    agent.ApprovalRequest
+	reply  chan agent.Decision
+	ctx    context.Context
+	cursor int
+}
+
+type App struct {
+	rt   *agent.Runtime
+	send func(tea.Msg)
+	md   markdown
+
+	width  int
+	height int
+
+	session *agent.Session
+	history []llm.Message
+	env     *tools.Env
+
+	input        textarea.Model
+	spin         spinner.Model
+	inputHistory []string
+	historyPos   int
+
+	busy          bool
+	cancel        context.CancelFunc
+	turnStart     time.Time
+	stream        strings.Builder
+	reasoning     strings.Builder
+	running       map[string]runningTool
+	runOrder      []string
+	queue         []string
+	notifications []string
+	todos         []tools.Todo
+	usage         llm.Usage
+	contextTokens int
+
+	approvals []*pendingApproval
+
+	view   viewKind
+	picker *modelPicker
+	agents *agentsView
+	home   *homeView
+
+	printQueue    []string
+	printing      bool
+	notice        string
+	lastCtrlC     time.Time
+	initialPrompt string
+}
+
+func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string) error {
+	dark := lipgloss.HasDarkBackground()
+	switch os.Getenv("MGA_THEME") {
+	case "light":
+		dark = false
+	case "dark":
+		dark = true
+	}
+	lipgloss.SetHasDarkBackground(dark)
+	app := newApp(rt, session, initialPrompt, dark)
+	p := tea.NewProgram(app)
+	app.attach(p)
+	_, err := p.Run()
+	rt.Tasks.StopAll()
+	app.saveSession()
+	if 0 < len(app.session.Messages) {
+		fmt.Printf("\nResume this session with: mga --resume %s\n", app.session.ID)
+	}
+	return err
+}
+
+func newApp(rt *agent.Runtime, session *agent.Session, initialPrompt string, dark bool) *App {
+	ta := textarea.New()
+	ta.Placeholder = "Ask anything, or type / for commands"
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 0
+	ta.MaxHeight = 0
+	ta.SetPromptFunc(2, func(line int) string {
+		if line == 0 {
+			return "> "
+		}
+		return "  "
+	})
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.FocusedStyle.Placeholder = styleDim
+	ta.KeyMap.InsertNewline = key.NewBinding(key.WithKeys("ctrl+j", "alt+enter"))
+	ta.SetHeight(1)
+	ta.Focus()
+
+	sp := spinner.New()
+	sp.Spinner = spinner.Spinner{Frames: []string{"·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"}, FPS: 120 * time.Millisecond}
+	sp.Style = styleAccent
+
+	return &App{
+		rt:            rt,
+		send:          func(tea.Msg) {},
+		md:            markdown{dark: dark},
+		width:         100,
+		height:        40,
+		session:       session,
+		history:       slices.Clone(session.Messages),
+		env:           &tools.Env{Cwd: rt.Cwd},
+		input:         ta,
+		spin:          sp,
+		running:       map[string]runningTool{},
+		initialPrompt: initialPrompt,
+	}
+}
+
+func (a *App) attach(p *tea.Program) {
+	a.send = p.Send
+	a.rt.Approve = a.approver
+	a.rt.Tasks.OnChange = func() { go p.Send(tasksChangedMsg{}) }
+	a.rt.Tasks.OnFinish = func(t agent.Task) { go p.Send(taskFinishedMsg(t)) }
+	a.wireEnv()
+}
+
+func (a *App) wireEnv() {
+	send := a.send
+	a.env.OnTodos = func(t []tools.Todo) { send(todosMsg(t)) }
+}
+
+func (a *App) approver(ctx context.Context, req agent.ApprovalRequest) agent.Decision {
+	reply := make(chan agent.Decision, 1)
+	a.send(approvalMsg{req: req, reply: reply, ctx: ctx})
+	select {
+	case d := <-reply:
+		return d
+	case <-ctx.Done():
+		return agent.Deny
+	}
+}
+
+func (a *App) Init() tea.Cmd {
+	provider, model := a.rt.Current()
+	a.emit(stylePanel.Render(fmt.Sprintf("%s mga · mini Go agent\n\n%s\n%s\n\n%s",
+		styleAccent.Render("✻"),
+		styleDim.Render("cwd:   ")+a.rt.Cwd,
+		styleDim.Render("model: ")+provider+":"+model,
+		styleDim.Render("/help for commands · /model to switch · /agents to manage agents"))))
+	if 0 < len(a.history) {
+		a.replay(a.history)
+	}
+	cmds := []tea.Cmd{textarea.Blink}
+	if a.initialPrompt != "" {
+		cmds = append(cmds, a.submit(a.initialPrompt))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (a *App) emit(s string) {
+	a.printQueue = append(a.printQueue, s)
+}
+
+func (a *App) flush() tea.Cmd {
+	if a.printing || len(a.printQueue) == 0 {
+		return nil
+	}
+	text := strings.Join(a.printQueue, "\n")
+	a.printQueue = nil
+	a.printing = true
+	return tea.Sequence(tea.Println(text), func() tea.Msg { return printDoneMsg{} })
+}
+
+func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmd := a.update(msg)
+	return a, tea.Batch(cmd, a.flush())
+}
+
+func (a *App) update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		a.width, a.height = msg.Width, msg.Height
+		a.input.SetWidth(max(a.width-6, 10))
+		return nil
+	case printDoneMsg:
+		a.printing = false
+		return nil
+	case spinner.TickMsg:
+		if !a.animating() {
+			return nil
+		}
+		var cmd tea.Cmd
+		a.spin, cmd = a.spin.Update(msg)
+		return cmd
+	case tea.KeyMsg:
+		return a.handleKey(msg)
+	case deltaMsg:
+		a.stream.WriteString(msg.Text)
+		a.reasoning.WriteString(msg.Reasoning)
+		return nil
+	case assistantMsg:
+		a.stream.Reset()
+		a.reasoning.Reset()
+		if text := strings.TrimSpace(msg.Content); text != "" {
+			a.emit(formatAssistant(&a.md, text, a.width))
+		}
+		return nil
+	case toolStartMsg:
+		a.running[msg.call.ID] = runningTool{name: msg.call.Name, summary: msg.summary, args: msg.call.Arguments}
+		a.runOrder = append(a.runOrder, msg.call.ID)
+		return nil
+	case toolResultMsg:
+		rt, ok := a.running[msg.call.ID]
+		if !ok {
+			rt = runningTool{name: msg.call.Name, summary: tools.OneLine(msg.call.Arguments, 80), args: msg.call.Arguments}
+		}
+		delete(a.running, msg.call.ID)
+		a.runOrder = slices.DeleteFunc(a.runOrder, func(id string) bool { return id == msg.call.ID })
+		a.emit(formatToolBlock(rt.name, rt.summary, rt.args, msg.result, msg.isErr, a.width))
+		return nil
+	case usageMsg:
+		a.usage.InputTokens += msg.InputTokens
+		a.usage.OutputTokens += msg.OutputTokens
+		a.contextTokens = msg.InputTokens + msg.OutputTokens
+		return nil
+	case todosMsg:
+		a.todos = msg
+		return nil
+	case turnDoneMsg:
+		return a.finishTurn(msg)
+	case approvalMsg:
+		a.approvals = append(a.approvals, &pendingApproval{req: msg.req, reply: msg.reply, ctx: msg.ctx})
+		return nil
+	case tasksChangedMsg:
+		if a.agents != nil {
+			a.agents.clampTask(a)
+		}
+		return a.spin.Tick
+	case taskFinishedMsg:
+		return a.taskFinished(agent.Task(msg))
+	case modelsLoadedMsg:
+		if a.picker != nil {
+			return a.picker.loaded(a, msg)
+		}
+		return nil
+	case keyCheckedMsg:
+		if a.picker != nil {
+			a.picker.keyChecked(a, msg)
+		}
+		return nil
+	case compactDoneMsg:
+		return a.compactDone(msg)
+	case editorDoneMsg:
+		if msg.err != nil {
+			a.emit(formatError("editor: " + msg.err.Error()))
+		}
+		if a.agents != nil {
+			a.agents.reload(a)
+		}
+		return nil
+	case agentStartedMsg:
+		if msg.err != nil {
+			a.emit(formatError(msg.err.Error()))
+		} else {
+			a.notice = "Started agent " + msg.name
+		}
+		return a.spin.Tick
+	}
+	var cmd tea.Cmd
+	if a.picker != nil && a.picker.stage == stageKey {
+		a.picker.keyInput, cmd = a.picker.keyInput.Update(msg)
+		return cmd
+	}
+	a.input, cmd = a.input.Update(msg)
+	return cmd
+}
+
+func (a *App) animating() bool {
+	pickerWaits := a.picker != nil && (a.picker.loading || a.picker.checking)
+	return a.busy || pickerWaits || 0 < a.rt.Tasks.Running()
+}
+
+func (a *App) activeApproval() *pendingApproval {
+	a.approvals = slices.DeleteFunc(a.approvals, func(p *pendingApproval) bool { return p.ctx.Err() != nil })
+	if len(a.approvals) == 0 {
+		return nil
+	}
+	return a.approvals[0]
+}
+
+func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
+	a.notice = ""
+	if ap := a.activeApproval(); ap != nil {
+		return a.approvalKey(ap, msg)
+	}
+	switch a.view {
+	case viewModels:
+		return a.picker.update(a, msg)
+	case viewAgents:
+		return a.agents.update(a, msg)
+	case viewHome:
+		return a.home.update(a, msg)
+	}
+
+	switch msg.String() {
+	case "ctrl+c":
+		if a.busy {
+			a.interrupt()
+			return nil
+		}
+		if a.input.Value() != "" {
+			a.input.Reset()
+			a.resizeInput()
+			return nil
+		}
+		if time.Since(a.lastCtrlC) < 2*time.Second {
+			return a.quit()
+		}
+		a.lastCtrlC = time.Now()
+		a.notice = "Press Ctrl+C again to exit"
+		return nil
+	case "ctrl+d":
+		if a.input.Value() == "" {
+			return a.quit()
+		}
+	case "esc":
+		if a.busy {
+			a.interrupt()
+			return nil
+		}
+		a.input.Reset()
+		a.resizeInput()
+		return nil
+	case "left":
+		if a.input.Value() == "" {
+			return a.openHome()
+		}
+	case "shift+tab":
+		a.setMode(a.rt.Perms.Mode().Next())
+		return nil
+	case "enter":
+		value := a.input.Value()
+		if strings.HasSuffix(value, "\\") {
+			a.input.SetValue(strings.TrimSuffix(value, "\\") + "\n")
+			a.resizeInput()
+			return nil
+		}
+		return a.submit(value)
+	case "tab":
+		if s := a.suggestions(); len(s) != 0 {
+			a.input.SetValue("/" + s[0].name + " ")
+			return nil
+		}
+	case "up":
+		if a.recallHistory(-1) {
+			return nil
+		}
+	case "down":
+		if a.recallHistory(1) {
+			return nil
+		}
+	}
+	var cmd tea.Cmd
+	a.input, cmd = a.input.Update(msg)
+	a.resizeInput()
+	return cmd
+}
+
+func (a *App) recallHistory(step int) bool {
+	value := a.input.Value()
+	if strings.Contains(value, "\n") || len(a.inputHistory) == 0 {
+		return false
+	}
+	browsing := a.historyPos < len(a.inputHistory) && value == a.inputHistory[a.historyPos]
+	if value != "" && !browsing {
+		return false
+	}
+	pos := a.historyPos + step
+	if pos < 0 || len(a.inputHistory) < pos {
+		return true
+	}
+	a.historyPos = pos
+	if pos == len(a.inputHistory) {
+		a.input.Reset()
+	} else {
+		a.input.SetValue(a.inputHistory[pos])
+	}
+	a.resizeInput()
+	return true
+}
+
+func (a *App) resizeInput() {
+	a.input.SetHeight(min(max(a.input.LineCount(), 1), maxInputHeight))
+}
+
+func (a *App) approvalKey(ap *pendingApproval, msg tea.KeyMsg) tea.Cmd {
+	choices := []agent.Decision{agent.Allow, agent.AllowAlways, agent.Deny}
+	decide := func(d agent.Decision) tea.Cmd {
+		ap.reply <- d
+		a.approvals = a.approvals[1:]
+		return nil
+	}
+	switch msg.String() {
+	case "up", "k", "shift+tab":
+		ap.cursor = max(ap.cursor-1, 0)
+	case "down", "j", "tab":
+		ap.cursor = min(ap.cursor+1, len(choices)-1)
+	case "1", "y":
+		return decide(agent.Allow)
+	case "2":
+		return decide(agent.AllowAlways)
+	case "3", "n", "esc":
+		return decide(agent.Deny)
+	case "enter":
+		return decide(choices[ap.cursor])
+	case "ctrl+c":
+		decide(agent.Deny)
+		a.interrupt()
+	}
+	return nil
+}
+
+func (a *App) submit(text string) tea.Cmd {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	a.input.Reset()
+	a.resizeInput()
+	if len(a.inputHistory) == 0 || a.inputHistory[len(a.inputHistory)-1] != text {
+		a.inputHistory = append(a.inputHistory, text)
+	}
+	a.historyPos = len(a.inputHistory)
+	if strings.HasPrefix(text, "/") && !strings.Contains(strings.Fields(text)[0][1:], "/") {
+		return a.runCommand(text)
+	}
+	if a.busy {
+		a.queue = append(a.queue, text)
+		return nil
+	}
+	return a.startTurn(text, formatUser(text, a.width))
+}
+
+func (a *App) startTurn(text, display string) tea.Cmd {
+	if display != "" {
+		a.emit(display)
+	}
+	ag, err := a.rt.MainAgent(a.env)
+	if err != nil {
+		a.emit(formatError(err.Error()))
+		return nil
+	}
+	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: text})
+	ctx, cancel := context.WithCancel(a.rt.BaseCtx)
+	a.cancel = cancel
+	a.busy = true
+	a.turnStart = time.Now()
+	history := slices.Clone(a.history)
+	obs := uiObserver{send: a.send}
+	return tea.Batch(a.spin.Tick, func() tea.Msg {
+		msgs, err := ag.Run(ctx, history, obs)
+		cancel()
+		return turnDoneMsg{msgs: msgs, err: err}
+	})
+}
+
+func (a *App) interrupt() {
+	if a.cancel != nil {
+		a.cancel()
+	}
+}
+
+func (a *App) finishTurn(msg turnDoneMsg) tea.Cmd {
+	a.busy = false
+	a.cancel = nil
+	if 0 < len(msg.msgs) {
+		a.history = msg.msgs
+	}
+	if partial := strings.TrimSpace(a.stream.String()); partial != "" {
+		a.emit(styleDim.Render(indent(partial, "⏺ ", "  ")))
+	}
+	a.stream.Reset()
+	a.reasoning.Reset()
+	a.running = map[string]runningTool{}
+	a.runOrder = nil
+	switch {
+	case msg.err == nil, errors.Is(msg.err, agent.ErrDenied):
+	case errors.Is(msg.err, context.Canceled):
+		a.emit(formatError("Interrupted · tell mga what to do instead"))
+	default:
+		a.emit(formatError(msg.err.Error()))
+	}
+	a.saveSession()
+	return a.nextTurn()
+}
+
+func (a *App) nextTurn() tea.Cmd {
+	if a.busy {
+		return nil
+	}
+	if 0 < len(a.queue) {
+		text := strings.Join(a.queue, "\n\n")
+		a.queue = nil
+		return a.startTurn(text, formatUser(text, a.width))
+	}
+	if 0 < len(a.notifications) {
+		text := strings.Join(a.notifications, "\n\n")
+		a.notifications = nil
+		return a.startTurn(text, formatNote(styleDim.Render("Background agent results sent to the model")))
+	}
+	return nil
+}
+
+func (a *App) taskFinished(t agent.Task) tea.Cmd {
+	status := styleOK.Render(string(t.Status))
+	if t.Status != agent.TaskCompleted {
+		status = styleErr.Render(string(t.Status))
+	}
+	a.emit(formatNote(fmt.Sprintf("Agent %s (%s) %s · %s · %d tool uses", t.Agent, t.ID, status, t.Elapsed(), t.ToolUses)))
+	if !t.NotifyMain {
+		return nil
+	}
+	body := t.Result
+	if t.Err != "" {
+		body = "Error: " + t.Err + "\n" + body
+	}
+	a.notifications = append(a.notifications, fmt.Sprintf(
+		"<task-notification>\nBackground agent %s (id %s, task %q) finished with status %s.\nResult:\n%s\n</task-notification>",
+		t.Agent, t.ID, t.Description, t.Status, body))
+	return a.nextTurn()
+}
+
+func (a *App) saveSession() {
+	provider, model := a.rt.Current()
+	a.session.Provider, a.session.Model = provider, model
+	a.session.Messages = a.history
+	if err := a.session.Save(config.SessionsDir()); err != nil {
+		a.notice = "could not save session: " + err.Error()
+	}
+}
+
+func (a *App) quit() tea.Cmd {
+	a.interrupt()
+	return tea.Quit
+}
+
+func (a *App) replay(msgs []llm.Message) {
+	start := max(len(msgs)-30, 0)
+	if 0 < start {
+		a.emit(styleDim.Render(fmt.Sprintf("… %d earlier messages", start)))
+	}
+	for _, m := range msgs[start:] {
+		switch m.Role {
+		case llm.RoleUser:
+			a.emit(formatUser(m.Content, a.width))
+		case llm.RoleAssistant:
+			if text := strings.TrimSpace(m.Content); text != "" {
+				a.emit(formatAssistant(&a.md, text, a.width))
+			}
+			for _, c := range m.ToolCalls {
+				a.emit(formatToolHeader(c.Name, tools.OneLine(c.Arguments, 80), true, a.width))
+			}
+		}
+	}
+}
+
+func (a *App) View() string {
+	var parts []string
+	if live := a.liveView(); live != "" {
+		parts = append(parts, live)
+	}
+	if ap := a.activeApproval(); ap != nil {
+		parts = append(parts, a.approvalView(ap))
+		return strings.Join(parts, "\n")
+	}
+	switch a.view {
+	case viewModels:
+		parts = append(parts, a.picker.view(a))
+	case viewAgents:
+		parts = append(parts, a.agents.view(a))
+	case viewHome:
+		parts = append(parts, a.home.view(a))
+	default:
+		parts = append(parts, a.chatView())
+	}
+	return strings.Join(parts, "\n")
+}
+
+func (a *App) liveView() string {
+	var lines []string
+	if text := strings.TrimSpace(a.stream.String()); text != "" {
+		all := strings.Split(text, "\n")
+		if liveStreamLines < len(all) {
+			all = all[len(all)-liveStreamLines:]
+		}
+		for i, l := range all {
+			prefix := "  "
+			if i == 0 {
+				prefix = "⏺ "
+			}
+			lines = append(lines, clip(prefix+l, a.width))
+		}
+	} else if thinking := strings.TrimSpace(a.reasoning.String()); thinking != "" {
+		all := strings.Split(thinking, "\n")
+		lines = append(lines, styleDim.Render(clip("✻ "+all[len(all)-1], a.width)))
+	}
+	for _, id := range a.runOrder {
+		rt := a.running[id]
+		lines = append(lines, a.spin.View()+" "+clip(styleBold.Render(rt.name)+"("+rt.summary+")", a.width-2))
+		if rt.name == "Task" {
+			for _, t := range a.rt.Tasks.Snapshot() {
+				if t.Status == agent.TaskRunning && !t.Background {
+					lines = append(lines, styleDim.Render(clip(fmt.Sprintf("  ⎿  %s: %s", t.Agent, t.LastActivity()), a.width)))
+				}
+			}
+		}
+	}
+	if a.busy {
+		elapsed := time.Since(a.turnStart).Round(time.Second)
+		status := fmt.Sprintf("%s %s", a.spin.View(), styleAccent.Render("Working…"))
+		status += styleDim.Render(fmt.Sprintf(" (%s · ↓ %s tokens · esc to interrupt)", elapsed, formatTokens(a.usage.OutputTokens)))
+		lines = append(lines, "", status)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(lines, "\n")
+}
+
+func (a *App) chatView() string {
+	var parts []string
+	if hasOpenTodos(a.todos) {
+		parts = append(parts, indent(formatTodos(a.todos), "  ⎿  ", "     "))
+	}
+	for _, q := range a.queue {
+		parts = append(parts, styleDim.Render(clip("  queued: "+tools.OneLine(q, 200), a.width)))
+	}
+	box := titledBox(a.input.View(), a.session.Title, max(a.width-2, 10))
+	parts = append(parts, box, a.statusLine())
+	if s := a.suggestions(); len(s) != 0 {
+		for i, c := range s {
+			if i == 8 {
+				break
+			}
+			name := fmt.Sprintf("/%-12s", c.name)
+			if i == 0 {
+				name = styleAccent.Render(name)
+			}
+			parts = append(parts, clip("  "+name+" "+styleDim.Render(c.desc), a.width))
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func hasOpenTodos(todos []tools.Todo) bool {
+	return slices.ContainsFunc(todos, func(t tools.Todo) bool { return t.Status != tools.TodoCompleted })
+}
+
+func (a *App) setMode(m agent.Mode) {
+	if err := a.rt.SetMode(m); err != nil {
+		a.notice = "could not save the mode: " + err.Error()
+	}
+}
+
+func (a *App) statusLine() string {
+	provider, model := a.rt.Current()
+	sep := styleDim.Render(" | ")
+	name := styleBold.Render(model) + styleDim.Render(" ("+provider+")")
+	if model == "" {
+		name = styleErr.Render("no model") + styleDim.Render(" ("+provider+", use /model)")
+	}
+	parts := []string{name, formatTokens(a.usage.InputTokens+a.usage.OutputTokens) + " tokens"}
+	if window := a.rt.ContextWindow(provider, model); 0 < window {
+		parts = append(parts, fmt.Sprintf("%d%% ctx remaining", remainingPercent(a.contextTokens, window)))
+	}
+	if n := a.rt.Tasks.Running(); 0 < n {
+		parts = append(parts, fmt.Sprintf("%d agent(s) running", n))
+	}
+	usage := clip("  "+strings.Join(parts, sep), a.width-1)
+
+	mode := a.rt.Perms.Mode()
+	label := styleAccent.Render(mode.Label())
+	if mode == agent.ModeDefault {
+		label = styleDim.Render(mode.Label())
+	}
+	right := styleDim.Render("← sessions · /help ")
+	if a.notice != "" {
+		right = styleInfo.Render(a.notice + " ")
+	}
+	left := "  " + label + styleDim.Render(" (shift+tab to cycle)")
+	if a.width-1 < lipgloss.Width(left)+lipgloss.Width(right)+1 {
+		left = "  " + label
+	}
+	return usage + "\n" + statusRow(left, right, a.width)
+}
+
+func remainingPercent(used, window int) int {
+	return max(100-used*100/window, 0)
+}
+
+func statusRow(left, right string, width int) string {
+	usable := width - 1
+	gap := usable - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		return clip(left, usable)
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+func (a *App) approvalView(ap *pendingApproval) string {
+	req := ap.req
+	title := styleBold.Render(toolTitle(req.Tool))
+	if req.Agent != "" && req.Agent != "main" {
+		title += styleDim.Render("  (agent: " + req.Agent + ")")
+	}
+	body := []string{title, "", "  " + clip(req.Summary, a.width-10)}
+	if req.Reason != "" {
+		body = append(body, "", styleInfo.Render(clip(req.Reason, a.width-8)))
+	}
+	if req.Tool == "Edit" || req.Tool == "Write" {
+		body = append(body, approvalPreview(req)...)
+	}
+	body = append(body, "", "Do you want to proceed?")
+	options := []string{"Yes", req.AlwaysLabel, "No, and tell mga what to do differently (esc)"}
+	for i, o := range options {
+		body = append(body, cursorLine(i == ap.cursor, fmt.Sprintf("%d. %s", i+1, o)))
+	}
+	if 1 < len(a.approvals) {
+		body = append(body, styleDim.Render(fmt.Sprintf("%d more request(s) waiting", len(a.approvals)-1)))
+	}
+	return stylePanel.Width(max(a.width-2, 10)).Render(strings.Join(body, "\n"))
+}
+
+func toolTitle(tool string) string {
+	switch tool {
+	case "Bash":
+		return "Bash command"
+	case "Edit":
+		return "Edit file"
+	case "Write":
+		return "Write file"
+	case "WebFetch":
+		return "Fetch URL"
+	}
+	return tool
+}
