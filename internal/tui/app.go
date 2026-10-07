@@ -19,6 +19,7 @@ import (
 	"github.com/kzhuang/mini-golang-agent/internal/agent"
 	"github.com/kzhuang/mini-golang-agent/internal/config"
 	"github.com/kzhuang/mini-golang-agent/internal/llm"
+	"github.com/kzhuang/mini-golang-agent/internal/mcp"
 	"github.com/kzhuang/mini-golang-agent/internal/tools"
 )
 
@@ -36,6 +37,7 @@ const (
 	viewModels
 	viewAgents
 	viewHome
+	viewMCP
 )
 
 type runningTool struct {
@@ -88,6 +90,10 @@ type App struct {
 	agents *agentsView
 	home   *homeView
 
+	mcp         *mcp.Manager
+	mcpView     *mcpView
+	mcpReported map[string]mcp.Status
+
 	printQueue    []string
 	printing      bool
 	clearScreen   bool
@@ -97,7 +103,7 @@ type App struct {
 	initialPrompt string
 }
 
-func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string) error {
+func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string, servers *mcp.Manager) error {
 	dark := lipgloss.HasDarkBackground()
 	switch os.Getenv("MGA_THEME") {
 	case "light":
@@ -107,8 +113,13 @@ func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string) error 
 	}
 	lipgloss.SetHasDarkBackground(dark)
 	app := newApp(rt, session, initialPrompt, dark)
+	app.mcp = servers
 	p := tea.NewProgram(app)
 	app.attach(p)
+	if servers != nil {
+		servers.OnChange = func() { go p.Send(mcpChangedMsg{}) }
+		go servers.ConnectAll(rt.BaseCtx)
+	}
 	_, err := p.Run()
 	rt.Tasks.StopAll()
 	app.saveSession()
@@ -200,6 +211,9 @@ func (a *App) resetScreen() {
 func (a *App) Init() tea.Cmd {
 	a.emit(a.banner())
 	a.replayPending = 0 < len(a.history)
+	if a.mcp != nil {
+		a.reportMCP()
+	}
 	cmds := []tea.Cmd{textarea.Blink}
 	if a.initialPrompt != "" {
 		cmds = append(cmds, a.submit(a.initialPrompt))
@@ -293,6 +307,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case approvalMsg:
 		a.approvals = append(a.approvals, &pendingApproval{req: msg.req, reply: msg.reply, ctx: msg.ctx})
 		return nil
+	case mcpChangedMsg:
+		a.reportMCP()
+		return a.spin.Tick
 	case tasksChangedMsg:
 		if a.agents != nil {
 			a.agents.clampTask(a)
@@ -342,7 +359,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 
 func (a *App) animating() bool {
 	pickerWaits := a.picker != nil && (a.picker.loading || a.picker.checking)
-	return a.busy || pickerWaits || 0 < a.rt.Tasks.Running()
+	return a.busy || pickerWaits || a.view == viewMCP || 0 < a.rt.Tasks.Running()
 }
 
 func (a *App) activeApproval() *pendingApproval {
@@ -365,6 +382,8 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return a.agents.update(a, msg)
 	case viewHome:
 		return a.home.update(a, msg)
+	case viewMCP:
+		return a.mcpView.update(a, msg)
 	}
 
 	switch msg.String() {
@@ -710,6 +729,8 @@ func (a *App) View() string {
 		parts = append(parts, a.agents.view(a))
 	case viewHome:
 		parts = append(parts, a.home.view(a))
+	case viewMCP:
+		parts = append(parts, a.mcpView.view(a))
 	default:
 		parts = append(parts, a.chatView())
 	}
@@ -872,5 +893,5 @@ func toolTitle(tool string) string {
 	case "WebFetch":
 		return "Fetch URL"
 	}
-	return tool
+	return displayToolName(tool)
 }

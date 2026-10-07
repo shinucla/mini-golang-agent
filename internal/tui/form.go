@@ -128,7 +128,7 @@ func (f *agentForm) save(a *App, v *agentsView) tea.Cmd {
 	toolNames := agentdef.ParseTools(f.inputs[fieldTools].Value())
 	known := tools.Names()
 	for _, t := range toolNames {
-		if !slices.Contains(known, t) {
+		if !slices.Contains(known, t) && !strings.HasPrefix(t, "mcp__") {
 			f.err = fmt.Sprintf("unknown tool %q; available: %s", t, strings.Join(known, ", "))
 			return nil
 		}

@@ -223,7 +223,11 @@ func ruleSubject(tool string, input json.RawMessage) string {
 
 func RuleMatches(rule, tool, subject string) bool {
 	name, pattern, hasPattern := strings.Cut(rule, "(")
-	if strings.TrimSpace(name) != tool {
+	name = strings.TrimSpace(name)
+	if !hasPattern && strings.HasPrefix(name, "mcp__") && strings.HasPrefix(tool, name+"__") {
+		return true
+	}
+	if name != tool {
 		return false
 	}
 	if !hasPattern {

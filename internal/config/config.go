@@ -55,6 +55,7 @@ type Config struct {
 	DefaultModel    string                    `json:"default_model,omitempty"`
 	PermissionMode  string                    `json:"permission_mode,omitempty"`
 	AutoModeAsk     string                    `json:"auto_mode_ask,omitempty"`
+	ApprovedMCP     map[string][]string       `json:"approved_mcp_servers,omitempty"`
 	AllowedTools    []string                  `json:"allowed_tools,omitempty"`
 	Providers       map[string]ProviderConfig `json:"providers,omitempty"`
 

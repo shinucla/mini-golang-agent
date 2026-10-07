@@ -18,6 +18,7 @@ import (
 	"github.com/kzhuang/mini-golang-agent/internal/agentdef"
 	"github.com/kzhuang/mini-golang-agent/internal/config"
 	"github.com/kzhuang/mini-golang-agent/internal/llm"
+	"github.com/kzhuang/mini-golang-agent/internal/mcp"
 	"github.com/kzhuang/mini-golang-agent/internal/tools"
 	"github.com/kzhuang/mini-golang-agent/internal/tui"
 )
@@ -33,6 +34,12 @@ Usage:
   mga agents show <name>        print an agent definition
   mga agents new <name> [--user] create an agent file to edit
   mga agents delete <name>      delete an agent definition
+  mga mcp list                  connect to each MCP server and show its status
+  mga mcp get <name>            show one MCP server and its tools
+  mga mcp add [flags] <name> -- <command> [args...]   add a stdio MCP server
+  mga mcp add -t http [flags] <name> <url>             add an HTTP MCP server
+  mga mcp remove [-s user|project] <name>              remove an MCP server
+  mga mcp approve <name>        allow a server from this project's .mcp.json
 
 Flags:
 `
@@ -61,6 +68,8 @@ func run(args []string) error {
 			return listProviders(cfg)
 		case "agents":
 			return agentsCommand(cwd, args[1:])
+		case "mcp":
+			return mcpCommand(cfg, cwd, args[1:])
 		}
 	}
 
@@ -101,6 +110,10 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	rt := agent.NewRuntime(ctx, cfg, cwd, agent.NewPermissions(mode, rules))
+	servers := mcp.Load(cwd, rt.ApprovedMCP())
+	servers.PersistApproval = rt.ApproveMCPServer
+	rt.MCP = servers
+	defer servers.Close()
 
 	session, err := pickSession(cwd, *continueLast, *resumeID)
 	if err != nil {
@@ -122,9 +135,10 @@ func run(args []string) error {
 	rt.SetCurrent(provider, model)
 
 	if printPrompt != "" || !isTerminal(os.Stdin) {
+		connectForPrint(ctx, servers)
 		return runPrint(ctx, rt, session, printPrompt, *verbose)
 	}
-	return tui.Run(rt, session, strings.Join(fs.Args(), " "))
+	return tui.Run(rt, session, strings.Join(fs.Args(), " "), servers)
 }
 
 func splitRules(s string) []string {

@@ -37,6 +37,7 @@ type (
 		ctx   context.Context
 	}
 	tasksChangedMsg struct{}
+	mcpChangedMsg   struct{}
 	taskFinishedMsg agent.Task
 	modelsLoadedMsg struct {
 		provider string

@@ -123,7 +123,7 @@ func (g *Gemini) Chat(ctx context.Context, req Request, onDelta func(Delta)) (*R
 	if len(req.Tools) != 0 {
 		decls := make([]gemDeclaration, len(req.Tools))
 		for i, t := range req.Tools {
-			decls[i] = gemDeclaration{Name: t.Name, Description: t.Description, Parameters: t.Parameters}
+			decls[i] = gemDeclaration{Name: t.Name, Description: t.Description, Parameters: geminiParameters(t.Parameters)}
 		}
 		body["tools"] = []map[string]any{{"functionDeclarations": decls}}
 	}
@@ -237,4 +237,73 @@ func geminiContents(req Request) []gemContent {
 func requiresSignature(model string) bool {
 	model = strings.TrimPrefix(model, "models/")
 	return !strings.HasPrefix(model, "gemini-1") && !strings.HasPrefix(model, "gemini-2")
+}
+
+var geminiSchemaKeys = []string{
+	"type", "format", "title", "description", "nullable", "enum", "properties", "required",
+	"items", "minItems", "maxItems", "minimum", "maximum", "minLength", "maxLength", "pattern",
+	"anyOf", "default", "minProperties", "maxProperties", "propertyOrdering",
+}
+
+func geminiParameters(schema map[string]any) map[string]any {
+	clean, _ := geminiSchema(schema).(map[string]any)
+	if props, _ := clean["properties"].(map[string]any); len(props) == 0 {
+		return nil
+	}
+	return clean
+}
+
+func geminiSchema(v any) any {
+	switch node := v.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for _, key := range geminiSchemaKeys {
+			value, ok := node[key]
+			if !ok {
+				continue
+			}
+			switch key {
+			case "properties":
+				props := map[string]any{}
+				if m, ok := value.(map[string]any); ok {
+					for name, sub := range m {
+						props[name] = geminiSchema(sub)
+					}
+				}
+				out[key] = props
+			case "items":
+				out[key] = geminiSchema(value)
+			case "anyOf":
+				if list, ok := value.([]any); ok {
+					var subs []any
+					for _, sub := range list {
+						subs = append(subs, geminiSchema(sub))
+					}
+					out[key] = subs
+				}
+			case "type":
+				if list, ok := value.([]any); ok {
+					for _, t := range list {
+						if t == "null" {
+							out["nullable"] = true
+						} else if _, set := out["type"]; !set {
+							out["type"] = t
+						}
+					}
+				} else {
+					out[key] = value
+				}
+			default:
+				out[key] = value
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(node))
+		for i, sub := range node {
+			out[i] = geminiSchema(sub)
+		}
+		return out
+	}
+	return v
 }

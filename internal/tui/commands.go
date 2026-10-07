@@ -23,6 +23,7 @@ var commands = []command{
 	{"help", "", "Show commands and keys"},
 	{"model", "[provider:model]", "Pick or set the provider and model"},
 	{"agents", "", "Manage agent definitions and running agents"},
+	{"mcp", "", "Show MCP servers, their status, and their tools"},
 	{"tasks", "", "Show running and finished sub-agents"},
 	{"mode", "[default|acceptEdits|plan|auto|bypassPermissions]", "Show or set the permission mode"},
 	{"permissions", "", "Show the permission mode and rules"},
@@ -81,6 +82,8 @@ func (a *App) runCommand(text string) tea.Cmd {
 			return nil
 		}
 		a.setModel(provider, model)
+	case "mcp":
+		return a.openMCP()
 	case "agents":
 		return a.openAgents(0)
 	case "tasks", "bashes":
@@ -169,6 +172,7 @@ func (a *App) statusText() string {
 		"Mode:      " + string(a.rt.Perms.Mode()),
 		fmt.Sprintf("Tokens:    %s in · %s out", formatTokens(a.usage.InputTokens), formatTokens(a.usage.OutputTokens)),
 		fmt.Sprintf("Agents:    %d defined · %d running", len(defs), a.rt.Tasks.Running()),
+		a.mcpStatusLine(),
 		"Config:    " + a.rt.Cfg.Path(),
 	}
 	return indent(strings.Join(lines, "\n"), "  ⎿  ", "     ")
@@ -260,4 +264,12 @@ func transcript(msgs []llm.Message) string {
 		}
 	}
 	return b.String()
+}
+
+func (a *App) mcpStatusLine() string {
+	if a.mcp == nil {
+		return "MCP:       off"
+	}
+	connected, total := a.mcp.Count()
+	return fmt.Sprintf("MCP:       %d of %d servers connected · %d tools", connected, total, len(a.mcp.Tools()))
 }

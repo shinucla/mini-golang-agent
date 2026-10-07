@@ -119,7 +119,7 @@ mga names each new session for you. After your first message, the current model 
 
 ### Slash commands
 
-`/help`, `/model [provider:model]`, `/agents`, `/tasks`, `/mode [mode]`, `/permissions`, `/clear`, `/compact [focus]`, `/resume`, `/init`, `/status`, `/exit`.
+`/help`, `/model [provider:model]`, `/agents`, `/tasks`, `/mcp`, `/mode [mode]`, `/permissions`, `/clear`, `/compact [focus]`, `/resume`, `/init`, `/status`, `/exit`.
 
 ## Tools
 
@@ -154,6 +154,27 @@ The main agent starts sub-agents with the `Task` tool. Each sub-agent can run in
 - **Library**: list, view, create (`n`), edit (`e`), open in `$EDITOR` (`o`), delete (`d`), or run an agent in the background with a prompt (`r`).
 - **Running**: all sub-agents with their status, time, and tool count. Press `enter` for the live log, `x` to stop an agent, and `c` to clear finished agents. `/tasks` opens this tab directly.
 
+## MCP servers
+
+mga connects to MCP (Model Context Protocol) servers and gives their tools to the model, like Claude Code.
+
+```sh
+mga mcp add github -e GITHUB_TOKEN='${GITHUB_TOKEN}' -- npx -y @modelcontextprotocol/server-github
+mga mcp add -t http -H "Authorization: Bearer ${TOKEN}" docs https://example.com/mcp
+mga mcp add -s project fs -- npx -y @modelcontextprotocol/server-filesystem .
+mga mcp list            # connect to each server and show its status and tool count
+mga mcp get github      # one server and its tools
+mga mcp remove github
+mga mcp approve fs      # allow a server from this project's .mcp.json
+```
+
+- **Config files.** `.mcp.json` in the project (the same format as Claude Code, so you can share one file) and `~/.mga/mcp.json` for all projects. `-s project` writes the first, and the default `-s user` writes the second. A project server replaces a user server with the same name. `${VAR}` and `${VAR:-default}` are expanded when mga connects.
+- **Transports.** stdio (a local command) and Streamable HTTP (a URL with optional headers). The old SSE transport and OAuth sign-in are not supported yet; use a header with a token.
+- **Approval.** A server in a project's `.mcp.json` can run any command, so mga starts it only after you approve it for that directory: press `a` in `/mcp`, or run `mga mcp approve <name>`. A server you add with `mga mcp add -s project` counts as approved.
+- **Tools.** Each tool is named `mcp__<server>__<tool>`, and the transcript shows it as `server - tool (MCP)`. A tool that the server marks read-only runs without a prompt; other tools follow the permission mode, and auto mode reviews them. The allow rule `mcp__<server>` allows every tool of that server. Sub-agents with no tool list get the MCP tools too; an agent definition can name single MCP tools in `tools:`.
+- **`/mcp`** lists the servers with their status and tool count. `enter` shows a server's details, tools, and error output, `a` approves, and `r` reconnects. When a server fails or waits for approval, the chat shows a short note.
+- Server instructions go into the system prompt. MCP resources and prompts are not supported yet.
+
 ## Project instructions
 
 mga adds these files to the system prompt when they exist: `~/.mga/MGA.md`, then `MGA.md`, `AGENTS.md`, `CLAUDE.md`, and `.mga/MGA.md` in the working directory. `/init` writes an `MGA.md` for the project.
@@ -171,7 +192,8 @@ internal/llm       provider interface, OpenAI-compatible and Gemini clients, SSE
 internal/tools     the tools and their JSON schemas
 internal/agent     agent loop, permissions, sub-agent runtime and registry, prompts, sessions
 internal/agentdef  agent definition files
-internal/tui       Bubble Tea UI: chat, approvals, model picker, agents manager, resume
+internal/mcp       MCP client: config files, JSON-RPC, stdio and HTTP transports, server manager
+internal/tui       Bubble Tea UI: chat, approvals, model picker, agents manager, sessions, MCP view
 ```
 
 ## Tests

@@ -115,7 +115,7 @@ func formatToolHeader(name, summary string, ok bool, width int) string {
 	if !ok {
 		bullet = styleErr.Render("⏺")
 	}
-	head := styleBold.Render(name)
+	head := styleBold.Render(displayToolName(name))
 	if summary != "" {
 		head += "(" + summary + ")"
 	}

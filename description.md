@@ -17,7 +17,8 @@ Last update: 2026-10-07.
 - a manager for agent definitions and for running sub-agents,
 - sessions that you can list, open, rename, and delete,
 - five permission modes, including an auto mode with a model-based safety review,
-- a two-line status bar (model, tokens, context left, mode) and the session name on the input box.
+- a two-line status bar (model, tokens, context left, mode) and the session name on the input box,
+- MCP servers (stdio and Streamable HTTP) whose tools the model can call, configured like Claude Code.
 
 The difference from Claude Code: `mga` works with many LLM providers, not one.
 
@@ -59,6 +60,7 @@ grep -rnE '^\s*//' --include='*.go' .   # must print nothing
 | Unit tests (`go test -race ./...`) | All pass: llm, tools, agent, agentdef, tui |
 | Built binary in `-p` mode against a fake OpenAI-compatible server | Works: tool call, deny path, allow-rule path, auto mode with an allow review, model list, provider list, agent list, session save |
 | Interactive TUI in a pseudo-terminal | Works: banner, streaming, tool spinner, tool result, slash completion, `/agents`, home view (← → Ctrl+R), key screen, mode cycle and mode saved across restarts, two-line status bar, session name on the input box, Esc, double Ctrl+C exit with status 0 |
+| MCP against a real server (2026-10-07) | Works with the official `@modelcontextprotocol/server-filesystem` (via `npx`): `mga mcp add`, `list` (connected, 14 tools), `get` (read-only flags honored), a `-p` turn where the model called `mcp__fs__read_text_file` and got the file text, and the project-approval flow in the TUI (needs approval → `a` → connected, approval saved). The model was a fake OpenAI-compatible server. |
 | Live calls to real providers | **Only one:** the `/model` key screen sent a fake key to the real OpenAI API and showed the real 401 rejection. No successful chat with a real provider yet. The build machine has no Ollama, no LM Studio, and no API keys. |
 | Build for Linux | A linux/amd64 build with Go 1.24.2 passed vet and tests on the build machine. The owner builds on a Linux machine too; a stale-file problem there is gotcha 15. |
 
@@ -82,6 +84,7 @@ mini-golang-agent/
 ├── internal/tools/          the tools, their JSON schemas, and the per-agent tool environment
 ├── internal/agent/          agent loop, permissions, auto-mode review, runtime (providers + sub-agents), task registry, prompts, sessions
 ├── internal/agentdef/       agent definition files (Markdown + YAML frontmatter), built-in agents
+├── internal/mcp/            MCP client: config files, JSON-RPC, stdio and HTTP transports, server manager, tool wrapper
 ├── internal/tui/            Bubble Tea UI: chat, approvals, status bar, model picker + key screen, agents manager, form, home view
 ├── .gitignore               bin/ and .claude/worktrees/
 ├── Makefile                 build, run, dev, test, test-race, vet, fmt, lint, check, tidy, install, uninstall, clean
@@ -125,7 +128,8 @@ Rules of the dependency graph:
 - `config` imports nothing from the project.
 - `llm` imports `config` only (for `llm.New`).
 - `tools` imports nothing from the project. It knows sub-agents only through `Env.Spawn` (a function) and `Task.Agents` (a function).
-- `agent` imports `llm`, `tools`, `agentdef`, `config`.
+- `agent` imports `llm`, `tools`, `agentdef`, `config`. It sees MCP only through the `ToolSource` interface (`Tools()`, `Instructions()`), so it does not import `mcp`.
+- `mcp` imports `config` and `tools`.
 - `tui` imports everything above. Nothing imports `tui` except `cmd/mga`.
 
 ### 4.2 One user turn (interactive)
@@ -341,6 +345,17 @@ Behavior details:
 - **Screen on session change.** `newSession` (`/clear`, `n` in the home view, deleting the current session) and `loadSession` (opening a session) call `resetScreen`: it drops queued output and sets `clearScreen`, and the next `flush` sends `tea.ClearScreen` and prints `\x1b[3J` (clear scrollback) in front of the queued text, in one `tea.Sequence`. A new session then shows the start banner. An opened session shows the banner, an "Opened session" note, and `replay`.
 - **Replay.** `replay` prints the last `replayLimit` (200) messages after a "… N earlier messages" note: user lines, assistant Markdown, and each tool result as a full tool block (`formatToolBlock`, with `toolSummary` from the tool call's arguments). `<task-notification>` messages replay as a note. At startup (`-c`, `--resume`) the replay waits for the first `tea.WindowSizeMsg` (`replayPending`), so it uses the real terminal width.
 - **Markdown padding.** Glamour pads lines with spaces wrapped in color codes. `trimStyledSpaces` removes them, so printed lines do not wrap when the terminal gets narrower.
+- **MCP in the UI.** `tui.Run` takes the `*mcp.Manager`, sets `OnChange` to `go p.Send(mcpChangedMsg{})`, and starts `ConnectAll` in a goroutine, so startup does not wait for servers. `/mcp` opens `mcpView` (`mcpview.go`): the server list, a detail page (target, server name and version, error, stderr tail, instructions, tools), `a` approve, `r` reconnect. `reportMCP` prints one chat note when a server fails or needs approval, and when it connects after one of those; `Init` calls it once, so a project that has only unapproved servers still gets its note. `displayToolName` shows `mcp__s__t` as `s - t (MCP)` in tool blocks and approval boxes. `/status` shows the connected count.
+
+### 5.7 `internal/mcp`
+
+- **Config (`config.go`).** `ServerConfig{type, command, args, env, url, headers}`, the same keys as Claude Code's `.mcp.json`. `Transport()` is `stdio` for a command, `http` for `type: http` (also `streamable-http`) or a URL without a command; anything else, such as `sse`, fails at connect with "not supported". Files: `ProjectConfigPath(cwd)` = `<cwd>/.mcp.json`, `UserConfigPath()` = `~/.mga/mcp.json` (written with mode 0600, because it can hold tokens). `WriteServer` keeps other top-level keys. `expand` resolves `${VAR}` and `${VAR:-default}` (and `$VAR`) at connect time, not when the file is read.
+- **Client (`client.go`).** JSON-RPC 2.0 with numeric ids and a pending map. `initialize` sends protocol version `2025-06-18` with empty client capabilities, then `notifications/initialized`. `listTools` follows `nextCursor` (100 pages at most). `callTool` sends `{name, arguments}`. A cancelled context sends `notifications/cancelled`. Server requests get answers: `ping` → `{}`, anything else → error -32601 (mga advertises no client capabilities, so servers should not ask for sampling or roots). `notifications/tools/list_changed` re-lists the tools. When the transport closes, every pending call fails with the close reason.
+- **Transports (`transport.go`).** stdio: the command runs in the project directory with the parent environment plus `env`, in its own process group; one JSON message per line; stderr goes to a 4 KB tail buffer that error messages and `/mcp` show; `close` closes stdin, waits 2 s, then kills the group. HTTP: every message is a POST with `Accept: application/json, text/event-stream`; the answer is JSON, an SSE stream (read to its end inside `send`), or 202 for notifications. mga keeps `Mcp-Session-Id` from any response and sends it and `MCP-Protocol-Version` (from `initialize`) on later requests; `close` sends DELETE with the session id. No GET stream, so the server cannot push messages outside a request.
+- **Tools (`tool.go`).** `Tool` implements `tools.Tool`. `ExposedName` = `mcp__<server>__<tool>` with characters outside `[A-Za-z0-9_-]` replaced by `_`; names over 64 characters end in a short SHA-1 suffix. `ReadOnly` comes from `annotations.readOnlyHint`. `Description` is "[MCP server s] …", at most 1,000 characters. `normalizeSchema` drops `$schema` and adds `type: object` and empty `properties` when missing (a nil schema is fine). `FormatResult` joins text parts, describes images, audio, and resources in one line, and falls back to `structuredContent`. `isError: true` becomes a tool error. A tool whose server is not connected returns "not connected; check /mcp".
+- **Manager (`manager.go`).** `Load(cwd, approved)` reads both files; a project server replaces a user server with the same name, and a project server not in `approved` starts as `needs approval`. `ConnectAll` connects the others in parallel with a 30 s limit for start, `initialize`, and the tool list; a failure keeps the error plus the stderr tail. `Approve` calls `PersistApproval` (the runtime saves `approved_mcp_servers[cwd]` in the config), then connects. `Reconnect` closes the old client first. `fail` ignores a client that is no longer the server's current client, which prevents an old client's close from marking a new connection as failed. `Tools`, `Instructions`, `Snapshot`, and `Count` read under the manager lock. `Close` stops every server.
+- **Wiring.** `cmd/mga` loads the manager at startup and sets `rt.MCP`. The TUI connects in the background. `-p` mode calls `connectForPrint` first: it waits for the servers and prints one stderr line for each failed or unapproved server. `Runtime.MainAgent` appends the MCP tools and adds "# MCP server instructions" to the system prompt. `Spawn` selects from built-in tools plus MCP tools, so an agent definition can list single MCP tools, and an agent with no list gets all of them (still minus `Task`). `RuleMatches` treats a bare `mcp__<server>` rule as "all tools of that server". `llm.geminiParameters` removes JSON Schema keys that Gemini rejects (`$schema`, `additionalProperties`, `$ref`, `const`, `examples`, and others), turns `type: [x, "null"]` into `type: x, nullable: true`, and leaves out the parameters of a tool with no properties, because Gemini rejects an empty object schema.
+- **CLI (`cmd/mga/mcp.go`).** `mga mcp list | get <name> | add | remove | approve <name>`. `add` takes `-s user|project` (default user), `-t stdio|http` (default http for an `http(s)://` target), repeatable `-e KEY=VALUE` and `-H "Name: value"`, then `<name>`, an optional `--`, and the command and its arguments or the URL. A server added with `-s project` is approved at once. `remove` searches the project file, then the user file, unless `-s` is given.
 
 ---
 
@@ -361,6 +376,9 @@ Behavior details:
 13. **Inputs inside overlays.** Non-key messages (cursor blinks) go to the chat textarea by default. The key screen's `textinput` gets them only because `App.update` forwards them while `picker.stage == stageKey`. Do the same for a new overlay with a focused input.
 14. **Headless tests and timers.** A focused `textinput` or `textarea` returns a blink command that returns another blink command forever. Test helpers that run commands (`drain`) must skip `spinner.TickMsg` and `cursor` messages, or the test hangs.
 15. **Moving work between machines.** Use git (`git pull`). A plain file copy keeps files that were deleted on the other side: a leftover `internal/tui/resume.go` once broke the Linux build (duplicate `loadSession`). Never commit `bin/`: a binary built on Linux does not run on macOS, and the reverse.
+16. **MCP callbacks.** `Client.onClosed` and `onToolsChanged` run in their own goroutines, and the manager's `OnChange` goes through `go p.Send`. Never set `onClosed` after the client starts: its reader goroutine reads it. To ignore an old client, take it out of `server.client` first; `fail` then ignores it.
+17. **MCP security.** Never start a project `.mcp.json` server before approval: the file comes from the repository, and its command runs with the user's rights. Approvals are per directory (`approved_mcp_servers` in `~/.mga/config.json`).
+18. **The `--` in `mga mcp add`.** Go's flag parser drops `--` only before the first argument. Here it comes after the server name, so `mcpAdd` removes it by hand; without that, `--` became the command.
 
 ---
 
@@ -382,6 +400,11 @@ make test         # quick tests
 | `internal/agentdef/agentdef_test.go` | Parse/format round trip; save, list, project-over-user override, delete, built-ins, name check. |
 | `internal/agent/agent_test.go` | A scripted provider drives the main agent: parallel Task + Glob, Explore gets three tools, the registry records the task; deny stops the turn and keeps the history valid; a background sub-agent finishes and calls `OnFinish` with `NotifyMain`; permission rule table and modes; `ParseReview` cases; the auto-mode check table and cycle; an auto-mode turn where an edit inside the project skips review, a write outside gets ask (approver sees the reason), `echo` gets allow, `rm -rf ~` gets block; `Runtime.Review` with a scripted model, and the fallback to ask on an unclear answer. |
 | `internal/tui/app_test.go` | Headless UI: a full turn with history and session save; approval keys; the agents form creates a project definition; the model picker with a custom model id. Home view: ← opens it only on an empty input, sessions of other directories are hidden, → opens an older session with its history, Ctrl+R renames without a reorder, d + y deletes, Esc returns, an agent log opens and ← returns (`selectSession` moves to the top first, because the list is newest first). Key screen: rejected key not saved, good key saved with mode 0600, stale key sends the user back to the key screen. Mode cycle at widths 60, 80, 120: always two status lines, each narrower than the terminal, label on line 2, auto saved, bypass not saved. Status line text (`gpt-5 (fake) | 52.0k tokens | 87% ctx remaining`), unknown size hides the percentage, listed size and `context_window` override, notice and mode on a narrow terminal. `titledBox`: name right-aligned at three widths, even line widths, plain border without a name, long name shortened, name on the app view. The `drain` helper runs nested `tea.BatchMsg` commands and ignores spinner ticks and cursor blinks (gotcha 14). |
+| `internal/mcp/mcp_test.go` | The test binary is also a fake stdio MCP server (`TestMain` with `MGA_FAKE_MCP=1`). Stdio: a project server waits for approval and exposes no tools, then connects; two tool pages; `readOnlyHint`; `$schema` removed; a nil schema; text, error, `${VAR:-default}` expansion, a server-to-client ping, cancel with `notifications/cancelled`, a crash with the stderr tail, a dead tool, and reconnect. HTTP: JSON and multi-line SSE answers, `Mcp-Session-Id` and `MCP-Protocol-Version` on later requests, DELETE on close, `structuredContent`, header expansion, and HTTP 401. Config files, names, and `FormatResult`. |
+| `internal/agent/mcp_test.go` | A stub `ToolSource`: the main agent sees and runs the MCP tool, the system prompt has the server instructions, the `mcp__docs` rule allows the call, and a sub-agent gets exactly the tools its definition lists. |
+| `internal/llm/gemini_schema_test.go` | `geminiParameters` drops unsupported keys, maps a nullable type, and leaves out an empty object schema. |
+| `internal/tui/mcp_test.go` | A fake HTTP server plus a broken one plus an unapproved project server: one note each (only once), `/mcp` rows and the detail page, the `/status` line, and the `server - tool (MCP)` display name. |
+| `cmd/mga/mcp_test.go` | `mga mcp add` for stdio (with `--` after the name) and http, mode 0600 on the user file, project add approves, invalid name, approve and remove errors. |
 
 Manual end-to-end checks (scripts lived in the job's temporary directory and are not in the repo):
 
@@ -399,7 +422,8 @@ Manual end-to-end checks (scripts lived in the job's temporary directory and are
 - No automatic compaction when the context gets full. `/compact` is manual.
 - The context size is unknown for most local models (Ollama, LM Studio) until the user sets `context_window` on the provider. The status bar then hides the percentage.
 - No cost tracking. Only token counts.
-- No MCP servers, hooks, skills, or plugins.
+- MCP covers tools only: no resources, no prompts as slash commands, no OAuth sign-in for HTTP servers (use a header with a token), and no old SSE transport. HTTP servers cannot push messages outside a request (no GET stream).
+- No hooks, skills, or plugins.
 - No `WebSearch` tool (it needs a search API).
 - No image input. `Read` reports images as binary.
 - Bash runs each command in a new shell in `Cwd`. `cd` does not persist between calls.
@@ -446,7 +470,7 @@ Manual end-to-end checks (scripts lived in the job's temporary directory and are
 
 ### 10.3 Later ideas
 
-Keychain storage for keys; auto-compaction near the context limit (the status bar already knows the percentage); persistent Bash working directory; saved permission rules; cost estimates per model; a custom status line command that gets Claude Code-style JSON on stdin; a context size lookup for Ollama (`/api/show`); MCP client support; `WebSearch`; image input for vision models; agent colors in the UI.
+Keychain storage for keys; auto-compaction near the context limit (the status bar already knows the percentage); persistent Bash working directory; saved permission rules; cost estimates per model; a custom status line command that gets Claude Code-style JSON on stdin; a context size lookup for Ollama (`/api/show`); MCP resources (`@` mentions) and MCP prompts (as slash commands); OAuth for HTTP MCP servers; the legacy SSE MCP transport; `WebSearch`; image input for vision models; agent colors in the UI.
 
 ---
 
@@ -457,5 +481,5 @@ Keychain storage for keys; auto-compaction near the context limit (the status ba
 3. Follow the rules in section 1.2: no comments, no `>` or `>=`, positive names, STE prose.
 4. For a new provider type, implement `llm.Provider`, add the type in `config` and `llm.New`, and add a fake-server test like the ones in `llm_test.go`.
 5. For a new tool, implement `tools.Tool`, add it to `tools.All`, keep the schema in the safe subset (gotcha 11), decide `ReadOnly` with care (it controls permissions and parallel runs), and add a `toolBody` case in `tui/render.go` if the default preview is not good.
-6. For TUI work, follow gotchas 1 to 8 and 12 to 14. Add a headless test in `internal/tui/app_test.go`. Check the result in a pseudo-terminal when the layout changes.
+6. For TUI work, follow gotchas 1 to 8 and 12 to 14. For MCP work, follow gotchas 16 and 17. Add a headless test in `internal/tui/app_test.go`. Check the result in a pseudo-terminal when the layout changes.
 7. Update this file when you change a design decision, an invariant, or the roadmap.

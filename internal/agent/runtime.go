@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -17,7 +18,13 @@ const (
 	subMaxSteps  = 150
 )
 
+type ToolSource interface {
+	Tools() []tools.Tool
+	Instructions() string
+}
+
 type Runtime struct {
+	MCP               ToolSource
 	Cfg               *config.Config
 	Cwd               string
 	Defs              *agentdef.Store
@@ -122,6 +129,41 @@ func (r *Runtime) askPolicy() AskPolicy {
 	return policy
 }
 
+func (r *Runtime) mcpTools() []tools.Tool {
+	if r.MCP == nil {
+		return nil
+	}
+	return r.MCP.Tools()
+}
+
+func (r *Runtime) mcpInstructions() string {
+	if r.MCP == nil {
+		return ""
+	}
+	if text := r.MCP.Instructions(); text != "" {
+		return "\n\n# MCP server instructions\n\n" + text
+	}
+	return ""
+}
+
+func (r *Runtime) ApprovedMCP() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.Cfg.ApprovedMCP[r.Cwd])
+}
+
+func (r *Runtime) ApproveMCPServer(name string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Cfg.ApprovedMCP == nil {
+		r.Cfg.ApprovedMCP = map[string][]string{}
+	}
+	if !slices.Contains(r.Cfg.ApprovedMCP[r.Cwd], name) {
+		r.Cfg.ApprovedMCP[r.Cwd] = append(r.Cfg.ApprovedMCP[r.Cwd], name)
+	}
+	return r.Cfg.Save()
+}
+
 func (r *Runtime) ProviderConfig(name string) (config.ProviderConfig, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -169,8 +211,8 @@ func (r *Runtime) MainAgent(env *tools.Env) (*Agent, error) {
 		Name:       "main",
 		Provider:   p,
 		Model:      model,
-		System:     MainPrompt(r.Cwd, providerName, model),
-		Tools:      tools.All(r.agentInfos),
+		System:     MainPrompt(r.Cwd, providerName, model) + r.mcpInstructions(),
+		Tools:      append(tools.All(r.agentInfos), r.mcpTools()...),
 		Env:        env,
 		Perms:      r.Perms,
 		Approve:    r.Approve,
@@ -217,7 +259,7 @@ func (r *Runtime) Spawn(ctx context.Context, req tools.SpawnRequest) (string, er
 		Provider:  p,
 		Model:     model,
 		System:    SubAgentPrompt(def, r.Cwd),
-		Tools:     tools.Without(tools.Select(tools.All(nil), def.Tools), "Task"),
+		Tools:     tools.Without(tools.Select(append(tools.All(nil), r.mcpTools()...), def.Tools), "Task"),
 		Env:       &tools.Env{Cwd: r.Cwd},
 		Perms:     r.Perms,
 		Approve:   r.Approve,
