@@ -30,7 +30,7 @@ The owner answered these questions at the start. Do not change them without aski
 | Meaning of "agent list view and management" | **Both**: (a) agent definitions (named agents with a prompt, model, and tools) with create/edit/delete, and (b) a live view of running sub-agents with status, log, and stop. |
 | Terminal UI | **Bubble Tea TUI** (charmbracelet), not a plain line REPL. |
 | Providers | **OpenAI, Gemini, DeepSeek, Ollama, plus any OpenAI-compatible endpoint.** Anthropic is **not** included. |
-| Git | **No git repo.** The project is plain files. Do not run `git init` or commit unless the owner asks. |
+| Git | Repo: `git@github.com:shinucla/mini-golang-agent.git`, branch `main` (since 2026-10-07; the project started as plain files). The owner works on it from more than one computer. Commit and push only when the owner asks. `bin/` is ignored: each machine builds its own binary with `make build` or `make install`. |
 
 ### 1.2 Workspace rules that apply to this code
 
@@ -83,6 +83,7 @@ mini-golang-agent/
 ├── internal/agent/          agent loop, permissions, auto-mode review, runtime (providers + sub-agents), task registry, prompts, sessions
 ├── internal/agentdef/       agent definition files (Markdown + YAML frontmatter), built-in agents
 ├── internal/tui/            Bubble Tea UI: chat, approvals, status bar, model picker + key screen, agents manager, form, home view
+├── .gitignore               bin/ and .claude/worktrees/
 ├── Makefile                 build, run, dev, test, test-race, vet, fmt, lint, check, tidy, install, uninstall, clean
 ├── README.md                user guide
 └── description.md           this file
@@ -359,7 +360,7 @@ Behavior details:
 12. **Config writes at runtime.** Background agents read the config while the UI writes it. Write only through the locked `Runtime` methods (`SetProviderKey`, `SaveDefault`, `SetMode`). Do not set `rt.Cfg` fields directly from the UI.
 13. **Inputs inside overlays.** Non-key messages (cursor blinks) go to the chat textarea by default. The key screen's `textinput` gets them only because `App.update` forwards them while `picker.stage == stageKey`. Do the same for a new overlay with a focused input.
 14. **Headless tests and timers.** A focused `textinput` or `textarea` returns a blink command that returns another blink command forever. Test helpers that run commands (`drain`) must skip `spinner.TickMsg` and `cursor` messages, or the test hangs.
-15. **Copying the project to another machine.** A plain copy keeps files that were deleted here. A leftover `internal/tui/resume.go` broke the Linux build once (duplicate `loadSession`). Sync with `rsync -a --delete` (exclude `bin/`), or use git if the owner asks for it.
+15. **Moving work between machines.** Use git (`git pull`). A plain file copy keeps files that were deleted on the other side: a leftover `internal/tui/resume.go` once broke the Linux build (duplicate `loadSession`). Never commit `bin/`: a binary built on Linux does not run on macOS, and the reverse.
 
 ---
 
