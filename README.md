@@ -48,6 +48,7 @@ To add an endpoint, put it in `~/.mga/config.json`. Set `MGA_HOME` to use a diff
   "default_provider": "ollama",
   "default_model": "qwen3-coder:30b",
   "permission_mode": "default",
+  "auto_mode_ask": "allow",
   "allowed_tools": ["Bash(go test:*)", "Bash(git status:*)", "WebFetch(domain:go.dev)"],
   "providers": {
     "vllm": { "type": "openai", "base_url": "http://gpu-box:8000/v1", "local": true },
@@ -127,7 +128,7 @@ Press `←` when the input is empty. The list shows the sessions of this directo
 - `Bash`, `Write`, `Edit`, and `WebFetch` ask for approval. The approval prompt offers "don't ask again". For Bash, that rule covers the first word of the command. For edits, it switches the session to accept-edits mode.
 - A prefix rule such as `Bash(go test:*)` never matches a command that contains `&&`, `;`, `|`, redirection, or command substitution.
 - Plan mode blocks every tool that is not read-only.
-- Auto mode runs read-only tools, edits inside the project, your allow rules, and a short list of safe commands (`go test`, `git status`, `ls`, and similar) at once. The current model reviews every other call before it runs. It answers allow (the call runs), ask (you get the normal prompt with the reason), or block (the call does not run and the agent is told why). If the review fails, mga asks you. Each review is one extra model call, and the verdict is a model judgment, not a guarantee.
+- Auto mode runs read-only tools, edits inside the project, your allow rules, and a short list of safe commands (`go test`, `git status`, `ls`, and similar) at once. The current model reviews every other call before it runs. It answers allow (the call runs), ask, or block (the call does not run and the agent is told why). What happens on ask depends on `"auto_mode_ask"` in `~/.mga/config.json`: `allow` (the default) runs the call and adds a note to its result, `prompt` asks you, and `block` stops it. If the review itself fails, mga always asks you. Each review is one extra model call, and the verdict is a model judgment, not a guarantee.
 
 ## Agents
 

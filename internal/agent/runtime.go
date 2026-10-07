@@ -115,6 +115,13 @@ func (r *Runtime) ContextWindow(provider, model string) int {
 	return llm.KnownContextWindow(model)
 }
 
+func (r *Runtime) askPolicy() AskPolicy {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	policy, _ := ParseAskPolicy(r.Cfg.AutoModeAsk)
+	return policy
+}
+
 func (r *Runtime) ProviderConfig(name string) (config.ProviderConfig, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -168,6 +175,7 @@ func (r *Runtime) MainAgent(env *tools.Env) (*Agent, error) {
 		Perms:      r.Perms,
 		Approve:    r.Approve,
 		Review:     r.Review,
+		AskPolicy:  r.askPolicy(),
 		StopOnDeny: true,
 		MaxSteps:   mainMaxSteps,
 	}, nil
@@ -205,16 +213,17 @@ func (r *Runtime) Spawn(ctx context.Context, req tools.SpawnRequest) (string, er
 		return "", err
 	}
 	a := &Agent{
-		Name:     def.Name,
-		Provider: p,
-		Model:    model,
-		System:   SubAgentPrompt(def, r.Cwd),
-		Tools:    tools.Without(tools.Select(tools.All(nil), def.Tools), "Task"),
-		Env:      &tools.Env{Cwd: r.Cwd},
-		Perms:    r.Perms,
-		Approve:  r.Approve,
-		Review:   r.Review,
-		MaxSteps: subMaxSteps,
+		Name:      def.Name,
+		Provider:  p,
+		Model:     model,
+		System:    SubAgentPrompt(def, r.Cwd),
+		Tools:     tools.Without(tools.Select(tools.All(nil), def.Tools), "Task"),
+		Env:       &tools.Env{Cwd: r.Cwd},
+		Perms:     r.Perms,
+		Approve:   r.Approve,
+		Review:    r.Review,
+		AskPolicy: r.askPolicy(),
+		MaxSteps:  subMaxSteps,
 	}
 
 	background := req.Background && r.BackgroundAllowed

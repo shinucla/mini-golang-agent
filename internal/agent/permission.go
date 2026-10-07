@@ -184,7 +184,11 @@ func AlwaysLabel(tool string, input json.RawMessage) string {
 	}
 	switch tool {
 	case "Bash":
-		return fmt.Sprintf("Yes, and don't ask again for `%s` commands this session", commandPrefix(bashCommand(input)))
+		pattern, wildcard := bashRule(bashCommand(input))
+		if wildcard {
+			return fmt.Sprintf("Yes, and don't ask again for `%s` commands this session", pattern)
+		}
+		return "Yes, and don't ask again for this exact command this session"
 	case "WebFetch":
 		return fmt.Sprintf("Yes, and don't ask again for %s this session", tools.Host(urlOf(input)))
 	}
@@ -196,7 +200,11 @@ func isEditTool(name string) bool { return name == "Edit" || name == "Write" }
 func suggestRule(tool string, input json.RawMessage) string {
 	switch tool {
 	case "Bash":
-		return fmt.Sprintf("Bash(%s:*)", commandPrefix(bashCommand(input)))
+		pattern, wildcard := bashRule(bashCommand(input))
+		if wildcard {
+			return fmt.Sprintf("Bash(%s:*)", pattern)
+		}
+		return fmt.Sprintf("Bash(%s)", pattern)
 	case "WebFetch":
 		return fmt.Sprintf("WebFetch(domain:%s)", tools.Host(urlOf(input)))
 	}
@@ -241,12 +249,22 @@ func hasShellOperators(cmd string) bool {
 	return false
 }
 
-func commandPrefix(cmd string) string {
+var subcommandTools = []string{
+	"git", "go", "npm", "pnpm", "yarn", "cargo", "docker", "kubectl", "gh", "pip", "brew", "make", "terraform", "helm",
+}
+
+func bashRule(cmd string) (string, bool) {
+	cmd = strings.TrimSpace(cmd)
 	fields := strings.Fields(cmd)
-	if len(fields) == 0 {
-		return ""
+	switch {
+	case len(fields) == 0, hasShellOperators(cmd):
+		return cmd, false
+	case !slices.Contains(subcommandTools, fields[0]):
+		return fields[0], true
+	case len(fields) == 1, strings.HasPrefix(fields[1], "-"):
+		return cmd, false
 	}
-	return fields[0]
+	return fields[0] + " " + fields[1], true
 }
 
 func bashCommand(input json.RawMessage) string {

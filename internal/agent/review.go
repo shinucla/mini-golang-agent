@@ -35,6 +35,26 @@ type ReviewRequest struct {
 
 type Reviewer func(ctx context.Context, req ReviewRequest) (ReviewDecision, string, error)
 
+type AskPolicy string
+
+const (
+	AskAllow  AskPolicy = "allow"
+	AskPrompt AskPolicy = "prompt"
+	AskBlock  AskPolicy = "block"
+)
+
+func ParseAskPolicy(s string) (AskPolicy, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "allow":
+		return AskAllow, nil
+	case "prompt", "ask":
+		return AskPrompt, nil
+	case "block":
+		return AskBlock, nil
+	}
+	return AskAllow, fmt.Errorf("unknown auto_mode_ask %q (use allow, prompt, or block)", s)
+}
+
 const reviewSystemPrompt = `You review one tool call of a coding agent before it runs. The user turned on auto mode: safe calls run without a prompt, so your verdict protects the user's machine and data.
 
 Answer with one JSON object and nothing else:
@@ -124,9 +144,19 @@ func (a *Agent) review(ctx context.Context, t tools.Tool, input json.RawMessage)
 	case ReviewAllow:
 		return verdictAllow, ""
 	case ReviewBlock:
-		return verdictBlock, "Auto mode blocked this call: " + reason + " Do not retry it. Ask the user if the action is really needed."
+		return blockedByAutoMode(reason)
 	}
-	return verdictAsk, "Auto mode: " + reason
+	switch a.AskPolicy {
+	case AskPrompt:
+		return verdictAsk, "Auto mode: " + reason
+	case AskBlock:
+		return blockedByAutoMode(reason)
+	}
+	return verdictAllow, "Auto mode allowed a flagged call: " + reason
+}
+
+func blockedByAutoMode(reason string) (verdict, string) {
+	return verdictBlock, "Auto mode blocked this call: " + reason + " Do not retry it. Ask the user if the action is really needed."
 }
 
 func lastUserText(msgs []llm.Message) string {

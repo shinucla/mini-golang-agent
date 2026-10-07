@@ -34,6 +34,7 @@ type Agent struct {
 	Perms      *Permissions
 	Approve    Approver
 	Review     Reviewer
+	AskPolicy  AskPolicy
 	StopOnDeny bool
 	MaxSteps   int
 
@@ -165,6 +166,9 @@ func (a *Agent) runTool(ctx context.Context, call llm.ToolCall, obs Observer) (l
 	}
 
 	out, err := t.Run(ctx, a.Env, input)
+	if verdict == verdictAllow && reason != "" {
+		out = "(" + reason + ")\n" + out
+	}
 	if err != nil {
 		if out != "" {
 			out += "\n"

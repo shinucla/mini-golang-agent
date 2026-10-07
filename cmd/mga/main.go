@@ -90,6 +90,9 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if _, err := agent.ParseAskPolicy(cfg.AutoModeAsk); err != nil {
+		return err
+	}
 	if *skip {
 		mode = agent.ModeBypass
 	}

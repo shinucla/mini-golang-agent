@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -176,8 +178,11 @@ func TestPermissionRules(t *testing.T) {
 	}
 	perms.SetMode(ModeDefault)
 	perms.remember(tools.Bash{}, json.RawMessage(`{"command":"go build ./..."}`))
-	if v, _ := perms.check(tools.Bash{}, json.RawMessage(`{"command":"go vet ./..."}`)); v != verdictAllow {
+	if v, _ := perms.check(tools.Bash{}, json.RawMessage(`{"command":"go build -o bin/x ."}`)); v != verdictAllow {
 		t.Fatal("remembered Bash prefix must allow")
+	}
+	if v, _ := perms.check(tools.Bash{}, json.RawMessage(`{"command":"go vet ./..."}`)); v != verdictAsk {
+		t.Fatal("a remembered go build must not allow other go subcommands")
 	}
 }
 
@@ -250,6 +255,10 @@ func TestAutoModeReviewsRunsAsksAndBlocks(t *testing.T) {
 		return Allow
 	}
 	ag, _ := rt.MainAgent(&tools.Env{Cwd: rt.Cwd})
+	if ag.AskPolicy != AskAllow {
+		t.Fatalf("default ask policy = %q, want allow", ag.AskPolicy)
+	}
+	ag.AskPolicy = AskPrompt
 	var reviewed []string
 	ag.Review = func(_ context.Context, req ReviewRequest) (ReviewDecision, string, error) {
 		reviewed = append(reviewed, req.Tool)
@@ -307,5 +316,108 @@ func TestRuntimeReviewAsksTheModel(t *testing.T) {
 	}
 	if decision, _, err := rt.Review(context.Background(), req); err == nil || decision != ReviewAsk {
 		t.Fatalf("an unclear answer must fall back to ask: %v %v", decision, err)
+	}
+}
+
+func TestAlwaysRuleIsNarrow(t *testing.T) {
+	cases := []struct {
+		cmd, rule, label string
+	}{
+		{"git push origin main", "Bash(git push:*)", "`git push` commands"},
+		{"ls -la", "Bash(ls:*)", "`ls` commands"},
+		{"git -C sub push", "Bash(git -C sub push)", "this exact command"},
+		{"cd web && npm test", "Bash(cd web && npm test)", "this exact command"},
+		{"make", "Bash(make)", "this exact command"},
+	}
+	for _, c := range cases {
+		in := json.RawMessage(`{"command":` + strconv.Quote(c.cmd) + `}`)
+		if got := suggestRule("Bash", in); got != c.rule {
+			t.Errorf("suggestRule(%q) = %q, want %q", c.cmd, got, c.rule)
+		}
+		if got := AlwaysLabel("Bash", in); !strings.Contains(got, c.label) {
+			t.Errorf("AlwaysLabel(%q) = %q", c.cmd, got)
+		}
+	}
+
+	perms := NewPermissions(ModeAuto, nil)
+	perms.remember(tools.Bash{}, json.RawMessage(`{"command":"git push origin main"}`))
+	for cmd, want := range map[string]verdict{
+		"git push origin feature": verdictAllow,
+		"git push --force":        verdictAllow,
+		"git reset --hard HEAD~1": verdictReview,
+		"git clean -fd":           verdictReview,
+	} {
+		in := json.RawMessage(`{"command":` + strconv.Quote(cmd) + `}`)
+		if got, _ := perms.check(tools.Bash{}, in); got != want {
+			t.Errorf("after allowing git push, %q = %v, want %v", cmd, got, want)
+		}
+	}
+	perms.remember(tools.Bash{}, json.RawMessage(`{"command":"cd web && npm test"}`))
+	if got, _ := perms.check(tools.Bash{}, json.RawMessage(`{"command":"cd web && npm test"}`)); got != verdictAllow {
+		t.Error("an exact rule must allow the same chained command")
+	}
+}
+
+func TestAutoModeAskPolicies(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "notes.txt")
+	run := func(policy AskPolicy, verdict ReviewDecision, reviewErr error) (llm.Message, int) {
+		p := &scripted{seen: map[string][]llm.Request{}, turns: map[string][]llm.Message{
+			"main": {
+				{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{call("w1", "Write", map[string]any{"file_path": outside, "content": "x"})}},
+				{Role: llm.RoleAssistant, Content: "done"},
+			},
+		}}
+		rt := newTestRuntime(t, p, ModeAuto)
+		prompts := 0
+		rt.Approve = func(context.Context, ApprovalRequest) Decision {
+			prompts++
+			return Allow
+		}
+		ag, _ := rt.MainAgent(&tools.Env{Cwd: rt.Cwd})
+		ag.AskPolicy = policy
+		ag.Review = func(context.Context, ReviewRequest) (ReviewDecision, string, error) {
+			return verdict, "writes outside the project.", reviewErr
+		}
+		os.Remove(outside)
+		msgs, err := ag.Run(context.Background(), []llm.Message{{Role: llm.RoleUser, Content: "save notes"}}, nopObserver{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return msgs[2], prompts
+	}
+
+	res, prompts := run(AskAllow, ReviewAsk, nil)
+	if prompts != 0 || res.IsError || !strings.HasPrefix(res.Content, "(Auto mode allowed a flagged call: writes outside the project.)") {
+		t.Fatalf("allow: prompts=%d result=%+v", prompts, res)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatal("allow: the write did not run")
+	}
+
+	res, prompts = run(AskBlock, ReviewAsk, nil)
+	if prompts != 0 || !res.IsError || !strings.Contains(res.Content, "Auto mode blocked this call") {
+		t.Fatalf("block: prompts=%d result=%+v", prompts, res)
+	}
+	if _, err := os.Stat(outside); err == nil {
+		t.Fatal("block: the write ran")
+	}
+
+	if _, prompts = run(AskPrompt, ReviewAsk, nil); prompts != 1 {
+		t.Fatalf("prompt: prompts=%d", prompts)
+	}
+	if res, prompts = run(AskAllow, ReviewBlock, nil); prompts != 0 || !res.IsError {
+		t.Fatalf("a block verdict must still block under allow: %+v", res)
+	}
+	if _, prompts = run(AskAllow, ReviewAsk, errors.New("network down")); prompts != 1 {
+		t.Fatalf("a failed review must ask even under allow, prompts=%d", prompts)
+	}
+
+	for in, want := range map[string]AskPolicy{"": AskAllow, "Allow": AskAllow, "prompt": AskPrompt, "block": AskBlock} {
+		if got, err := ParseAskPolicy(in); err != nil || got != want {
+			t.Errorf("ParseAskPolicy(%q) = %q, %v", in, got, err)
+		}
+	}
+	if _, err := ParseAskPolicy("maybe"); err == nil {
+		t.Error("an unknown policy must fail")
 	}
 }
