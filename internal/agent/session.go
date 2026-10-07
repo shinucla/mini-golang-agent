@@ -27,7 +27,14 @@ type Session struct {
 
 	Usage         llm.Usage `json:"usage"`
 	ContextTokens int       `json:"context_tokens"`
+	TitleSource   string    `json:"title_source,omitempty"`
 }
+
+const (
+	TitleFromText  = "text"
+	TitleFromModel = "model"
+	TitleFromUser  = "user"
+)
 
 func NewSession(cwd string) *Session {
 	b := make([]byte, 3)
@@ -44,6 +51,7 @@ func (s *Session) Save(dir string) error {
 		for _, m := range s.Messages {
 			if m.Role == llm.RoleUser {
 				s.Title = tools.OneLine(m.Content, 80)
+				s.TitleSource = TitleFromText
 				break
 			}
 		}
@@ -53,7 +61,12 @@ func (s *Session) Save(dir string) error {
 }
 
 func (s *Session) Rename(dir, title string) error {
+	return s.SetTitle(dir, title, TitleFromUser)
+}
+
+func (s *Session) SetTitle(dir, title, source string) error {
 	s.Title = strings.TrimSpace(title)
+	s.TitleSource = source
 	if len(s.Messages) == 0 {
 		return nil
 	}

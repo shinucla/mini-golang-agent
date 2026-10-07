@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,6 +25,8 @@ import (
 const (
 	maxInputHeight  = 10
 	liveStreamLines = 14
+	replayLimit     = 200
+	clearScrollback = "\x1b[3J"
 )
 
 type viewKind int
@@ -87,6 +90,8 @@ type App struct {
 
 	printQueue    []string
 	printing      bool
+	clearScreen   bool
+	replayPending bool
 	notice        string
 	lastCtrlC     time.Time
 	initialPrompt string
@@ -177,16 +182,24 @@ func (a *App) approver(ctx context.Context, req agent.ApprovalRequest) agent.Dec
 	}
 }
 
-func (a *App) Init() tea.Cmd {
+func (a *App) banner() string {
 	provider, model := a.rt.Current()
-	a.emit(stylePanel.Render(fmt.Sprintf("%s mga · mini Go agent\n\n%s\n%s\n\n%s",
+	return stylePanel.Render(fmt.Sprintf("%s mga · mini Go agent\n\n%s\n%s\n\n%s",
 		styleAccent.Render("✻"),
 		styleDim.Render("cwd:   ")+a.rt.Cwd,
 		styleDim.Render("model: ")+provider+":"+model,
-		styleDim.Render("/help for commands · /model to switch · /agents to manage agents"))))
-	if 0 < len(a.history) {
-		a.replay(a.history)
-	}
+		styleDim.Render("/help for commands · /model to switch · ← sessions")))
+}
+
+func (a *App) resetScreen() {
+	a.printQueue = nil
+	a.clearScreen = true
+	a.emit(a.banner())
+}
+
+func (a *App) Init() tea.Cmd {
+	a.emit(a.banner())
+	a.replayPending = 0 < len(a.history)
 	cmds := []tea.Cmd{textarea.Blink}
 	if a.initialPrompt != "" {
 		cmds = append(cmds, a.submit(a.initialPrompt))
@@ -199,13 +212,20 @@ func (a *App) emit(s string) {
 }
 
 func (a *App) flush() tea.Cmd {
-	if a.printing || len(a.printQueue) == 0 {
+	if a.printing || (len(a.printQueue) == 0 && !a.clearScreen) {
 		return nil
 	}
 	text := strings.Join(a.printQueue, "\n")
 	a.printQueue = nil
 	a.printing = true
-	return tea.Sequence(tea.Println(text), func() tea.Msg { return printDoneMsg{} })
+	var steps []tea.Cmd
+	if a.clearScreen {
+		a.clearScreen = false
+		text = clearScrollback + text
+		steps = append(steps, tea.ClearScreen)
+	}
+	steps = append(steps, tea.Println(text), func() tea.Msg { return printDoneMsg{} })
+	return tea.Sequence(steps...)
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -219,6 +239,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		a.width, a.height = msg.Width, msg.Height
 		a.input.SetWidth(max(a.width-6, 10))
 		a.editInput(func() {})
+		if a.replayPending {
+			a.replayPending = false
+			a.replay(a.history)
+		}
 		return nil
 	case printDoneMsg:
 		a.printing = false
@@ -288,6 +312,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return nil
 	case compactDoneMsg:
 		return a.compactDone(msg)
+	case titleMsg:
+		a.applyTitle(msg)
+		return nil
 	case editorDoneMsg:
 		if msg.err != nil {
 			a.emit(formatError("editor: " + msg.err.Error()))
@@ -490,6 +517,7 @@ func (a *App) startTurn(text, display string) tea.Cmd {
 		a.emit(formatError(err.Error()))
 		return nil
 	}
+	firstRequest := a.needsTitle(text)
 	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: text})
 	ctx, cancel := context.WithCancel(a.rt.BaseCtx)
 	a.cancel = cancel
@@ -497,11 +525,51 @@ func (a *App) startTurn(text, display string) tea.Cmd {
 	a.turnStart = time.Now()
 	history := slices.Clone(a.history)
 	obs := uiObserver{send: a.send}
-	return tea.Batch(a.spin.Tick, func() tea.Msg {
+	cmds := []tea.Cmd{a.spin.Tick, func() tea.Msg {
 		msgs, err := ag.Run(ctx, history, obs)
 		cancel()
 		return turnDoneMsg{msgs: msgs, err: err}
-	})
+	}}
+	if firstRequest {
+		cmds = append(cmds, a.titleCmd(a.session.ID, text))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (a *App) needsTitle(text string) bool {
+	if a.session.TitleSource == agent.TitleFromUser || strings.HasPrefix(text, "<task-notification>") {
+		return false
+	}
+	return !slices.ContainsFunc(a.history, func(m llm.Message) bool { return m.Role == llm.RoleUser })
+}
+
+func (a *App) titleCmd(sessionID, request string) tea.Cmd {
+	rt := a.rt
+	return func() tea.Msg {
+		title, err := rt.SessionTitle(rt.BaseCtx, request)
+		return titleMsg{sessionID: sessionID, title: title, err: err}
+	}
+}
+
+func (a *App) applyTitle(msg titleMsg) {
+	if msg.err != nil || msg.title == "" {
+		return
+	}
+	dir := config.SessionsDir()
+	s := a.session
+	if s.ID != msg.sessionID {
+		loaded, err := agent.LoadSession(dir, msg.sessionID)
+		if err != nil {
+			return
+		}
+		s = loaded
+	}
+	if s.TitleSource == agent.TitleFromUser {
+		return
+	}
+	if err := s.SetTitle(dir, msg.title, agent.TitleFromModel); err != nil {
+		a.notice = "could not save the session name: " + err.Error()
+	}
 }
 
 func (a *App) interrupt() {
@@ -587,23 +655,43 @@ func (a *App) quit() tea.Cmd {
 }
 
 func (a *App) replay(msgs []llm.Message) {
-	start := max(len(msgs)-30, 0)
+	start := max(len(msgs)-replayLimit, 0)
 	if 0 < start {
 		a.emit(styleDim.Render(fmt.Sprintf("… %d earlier messages", start)))
 	}
+	calls := map[string]llm.ToolCall{}
 	for _, m := range msgs[start:] {
 		switch m.Role {
 		case llm.RoleUser:
+			if strings.HasPrefix(m.Content, "<task-notification>") {
+				a.emit(formatNote(styleDim.Render("Background agent results sent to the model")))
+				continue
+			}
 			a.emit(formatUser(m.Content, a.width))
 		case llm.RoleAssistant:
 			if text := strings.TrimSpace(m.Content); text != "" {
 				a.emit(formatAssistant(&a.md, text, a.width))
 			}
 			for _, c := range m.ToolCalls {
-				a.emit(formatToolHeader(c.Name, tools.OneLine(c.Arguments, 80), true, a.width))
+				calls[c.ID] = c
 			}
+		case llm.RoleTool:
+			c, ok := calls[m.ToolCallID]
+			if !ok {
+				c = llm.ToolCall{Name: m.ToolName}
+			}
+			a.emit(formatToolBlock(c.Name, toolSummary(c.Name, c.Arguments), c.Arguments, m.Content, m.IsError, a.width))
 		}
 	}
+}
+
+func toolSummary(name, args string) string {
+	for _, t := range tools.All(nil) {
+		if t.Name() == name {
+			return t.Summary(json.RawMessage(args))
+		}
+	}
+	return tools.OneLine(args, 80)
 }
 
 func (a *App) View() string {

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -17,6 +18,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kzhuang/mini-golang-agent/internal/agent"
 	"github.com/kzhuang/mini-golang-agent/internal/agentdef"
@@ -336,7 +338,7 @@ func TestHomeViewOpensRenamesAndDeletesSessions(t *testing.T) {
 		t.Fatalf("cursor must start on the current session, got %s", cur.ID)
 	}
 	updated := older.Updated
-	app.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	typeText(app, "r")
 	for range "older work" {
 		app.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	}
@@ -591,5 +593,139 @@ func TestOpeningASessionRestoresTokensAndContext(t *testing.T) {
 	started.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	if line := strings.Split(started.statusLine(), "\n")[0]; !strings.Contains(line, "52.0k tokens | 87% ctx remaining") {
 		t.Fatalf("usage not restored at startup: %q", line)
+	}
+}
+
+func TestNewSessionClearsAndOpenedSessionReplays(t *testing.T) {
+	app := newTestApp(t)
+	app.printing = false
+	app.printQueue = nil
+	app.emit("old output that must not survive")
+	app.newSession()
+	if !app.clearScreen || len(app.printQueue) != 1 || !strings.Contains(app.printQueue[0], "mga · mini Go agent") {
+		t.Fatalf("new session: clear=%v queue=%q", app.clearScreen, app.printQueue)
+	}
+	if app.flush() == nil || app.clearScreen {
+		t.Fatal("flush must send the clear once")
+	}
+
+	s := agent.NewSession(app.rt.Cwd)
+	s.Title = "tool work"
+	s.Messages = []llm.Message{
+		{Role: llm.RoleUser, Content: "list files"},
+		{Role: llm.RoleAssistant, Content: "Running it.", ToolCalls: []llm.ToolCall{{ID: "c1", Name: "Bash", Arguments: `{"command":"echo replayed-output"}`}}},
+		{Role: llm.RoleTool, ToolCallID: "c1", ToolName: "Bash", Content: "replayed-output"},
+		{Role: llm.RoleUser, Content: "<task-notification>\nagent done\n</task-notification>"},
+		{Role: llm.RoleAssistant, Content: "All done."},
+	}
+	app.printing = false
+	app.loadSession(s)
+	out := ansi.Strip(strings.Join(app.printQueue, "\n"))
+	if !app.clearScreen || !strings.HasPrefix(app.printQueue[0], app.banner()) {
+		t.Fatal("opening a session must clear the screen and show the banner first")
+	}
+	for _, want := range []string{"Opened session", "> list files", "Running it.", "Bash", "echo replayed-output", "⎿  replayed-output", "Background agent results", "All done."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("replay misses %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "<task-notification>") {
+		t.Fatal("notifications must not replay as raw user text")
+	}
+	for _, l := range strings.Split(strings.Join(app.printQueue, "\n"), "\n") {
+		if strings.HasSuffix(ansi.Strip(l), " ") {
+			t.Fatalf("rendered line keeps trailing padding: %q", l)
+		}
+	}
+}
+
+func TestReplayWaitsForWidthAndLimitsLength(t *testing.T) {
+	t.Setenv("MGA_HOME", t.TempDir())
+	cfg, _ := config.Load()
+	rt := agent.NewRuntime(context.Background(), cfg, t.TempDir(), agent.NewPermissions(agent.ModeDefault, nil))
+	rt.SetCurrent("ollama", "m")
+	s := agent.NewSession(rt.Cwd)
+	for i := range 250 {
+		s.Messages = append(s.Messages, llm.Message{Role: llm.RoleUser, Content: fmt.Sprintf("message %d", i)})
+	}
+	app := newApp(rt, s, "", true)
+	app.Init()
+	if len(app.printQueue) != 1 {
+		t.Fatalf("replay must wait for the width, queue=%d", len(app.printQueue))
+	}
+	app.printing = true
+	app.Update(tea.WindowSizeMsg{Width: 70, Height: 40})
+	lines := map[string]bool{}
+	for _, l := range strings.Split(ansi.Strip(strings.Join(app.printQueue, "\n")), "\n") {
+		lines[strings.TrimSpace(l)] = true
+	}
+	if !lines["… 50 earlier messages"] || lines["> message 49"] || !lines["> message 50"] || !lines["> message 249"] {
+		t.Fatal("the replay must show only the last 200 messages after a note")
+	}
+}
+
+type titleProvider struct {
+	title string
+	fail  bool
+}
+
+func (titleProvider) Name() string                                    { return "fake" }
+func (titleProvider) ListModels(context.Context) ([]llm.Model, error) { return nil, nil }
+
+func (p titleProvider) Chat(_ context.Context, req llm.Request, _ func(llm.Delta)) (*llm.Response, error) {
+	if strings.Contains(req.System, "name chat sessions") {
+		if p.fail {
+			return nil, errors.New("title service down")
+		}
+		return &llm.Response{Message: llm.Message{Role: llm.RoleAssistant, Content: p.title}}, nil
+	}
+	return &llm.Response{Message: llm.Message{Role: llm.RoleAssistant, Content: "ok"}}, nil
+}
+
+func TestFirstMessageGetsModelTitle(t *testing.T) {
+	app := newTestApp(t)
+	app.rt.RegisterProvider("fake", titleProvider{title: "Explain the agent loop design."})
+	request := "please read the whole project and then explain to me how the agent loop works"
+	typeText(app, request)
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	drain(app, cmd)
+	if app.session.Title != "Explain the agent loop design" || app.session.TitleSource != agent.TitleFromModel {
+		t.Fatalf("title = %q (%s)", app.session.Title, app.session.TitleSource)
+	}
+	saved, err := agent.LoadSession(config.SessionsDir(), app.session.ID)
+	if err != nil || saved.Title != "Explain the agent loop design" {
+		t.Fatalf("saved title = %+v, %v", saved, err)
+	}
+	if !strings.Contains(app.View(), "Explain the agent loop design ─╮") {
+		t.Fatalf("title not on the input box:\n%s", app.View())
+	}
+
+	if app.needsTitle("a second request") {
+		t.Fatal("only the first request asks for a title")
+	}
+
+	app.session.TitleSource = agent.TitleFromUser
+	app.session.Title = "my own name"
+	app.applyTitle(titleMsg{sessionID: app.session.ID, title: "Late model title"})
+	if app.session.Title != "my own name" {
+		t.Fatal("a model title must not replace a user name")
+	}
+
+	other := saveTestSession(t, app.rt.Cwd, "", "first words of another session")
+	other.TitleSource = agent.TitleFromText
+	app.applyTitle(titleMsg{sessionID: other.ID, title: "Summarized other session"})
+	if reloaded, _ := agent.LoadSession(config.SessionsDir(), other.ID); reloaded.Title != "Summarized other session" {
+		t.Fatalf("title of a session the user left = %q", reloaded.Title)
+	}
+}
+
+func TestTitleFailureKeepsRequestText(t *testing.T) {
+	app := newTestApp(t)
+	app.rt.RegisterProvider("fake", titleProvider{fail: true})
+	typeText(app, "fix the failing build")
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	drain(app, cmd)
+	if app.session.Title != "fix the failing build" || app.session.TitleSource != agent.TitleFromText {
+		t.Fatalf("title = %q (%s)", app.session.Title, app.session.TitleSource)
 	}
 }

@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -64,7 +65,7 @@ func (m *markdown) render(text string, width int) string {
 	}
 	lines := strings.Split(strings.Trim(out, "\n"), "\n")
 	for i, l := range lines {
-		lines[i] = strings.TrimRight(l, " ")
+		lines[i] = trimStyledSpaces(l)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -301,4 +302,14 @@ func wrappedRows(runes []rune, width int) int {
 		rows++
 	}
 	return rows
+}
+
+var styledTrailingSpace = regexp.MustCompile(`(\x1b\[[0-9;]*m| )+$`)
+
+func trimStyledSpaces(line string) string {
+	trimmed := styledTrailingSpace.ReplaceAllString(line, "")
+	if trimmed == line {
+		return line
+	}
+	return trimmed + "\x1b[0m"
 }

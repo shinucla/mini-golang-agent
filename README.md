@@ -107,13 +107,15 @@ Press `←` when the input is empty. The list shows the sessions of this directo
 |---|---|
 | `↑` / `↓` | Select |
 | `→` / `enter` | Open the session, or the agent's live log (`←` goes back) |
-| `ctrl+r` | Rename the session |
+| `r` | Rename the session |
 | `n` / `ctrl+n` | Start a new session |
 | `d` | Delete the session (asks first) |
 | `x` | Stop the agent |
 | `esc` | Back to the current session |
 
 `/resume` opens the same list.
+
+mga names each new session for you. After your first message, the current model writes a title of at most 8 words that captures the idea, and the title shows on the input box and in the list. Until the title arrives, or if the model cannot make one, the session uses the start of your first message. A name you set with `r` is never replaced.
 
 ### Slash commands
 

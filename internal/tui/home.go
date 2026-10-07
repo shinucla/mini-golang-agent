@@ -104,7 +104,7 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		h.cursor = min(h.cursor+1, max(len(items)-1, 0))
 	case "right", "enter", "l":
 		return h.open(a, selected)
-	case "ctrl+r":
+	case "r":
 		if !selected.isSession() {
 			h.err = "Only sessions can be renamed."
 			return nil
@@ -211,7 +211,7 @@ func (a *App) newSession() {
 	a.contextTokens = 0
 	a.env = &tools.Env{Cwd: a.rt.Cwd}
 	a.wireEnv()
-	a.emit(formatNote("New session"))
+	a.resetScreen()
 }
 
 func (a *App) loadSession(s *agent.Session) {
@@ -225,6 +225,7 @@ func (a *App) loadSession(s *agent.Session) {
 	if s.Provider != "" && s.Model != "" {
 		a.rt.SetCurrent(s.Provider, s.Model)
 	}
+	a.resetScreen()
 	a.emit(formatNote("Opened session " + styleBold.Render(sessionName(s)) + styleDim.Render(" · "+s.ID)))
 	a.replay(a.history)
 }
@@ -266,7 +267,7 @@ func (h *homeView) view(a *App) string {
 	case h.confirmDelete:
 		lines = append(lines, "", styleErr.Render("Delete this session? y to confirm, any other key to cancel"))
 	default:
-		lines = append(lines, "", styleDim.Render("→/enter open · ctrl+r rename · n new session · d delete · x stop agent · esc back"))
+		lines = append(lines, "", styleDim.Render("→/enter open · r rename · n new session · d delete · x stop agent · esc back"))
 	}
 	if h.err != "" {
 		lines = append(lines, styleErr.Render(h.err))

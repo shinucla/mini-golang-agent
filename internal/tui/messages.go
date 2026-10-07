@@ -49,6 +49,11 @@ type (
 		models   []llm.Model
 		err      error
 	}
+	titleMsg struct {
+		sessionID string
+		title     string
+		err       error
+	}
 	compactDoneMsg struct {
 		summary string
 		err     error

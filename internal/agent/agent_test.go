@@ -421,3 +421,37 @@ func TestAutoModeAskPolicies(t *testing.T) {
 		t.Error("an unknown policy must fail")
 	}
 }
+
+func TestCleanTitle(t *testing.T) {
+	cases := map[string]string{
+		"Fix flaky login test":                             "Fix flaky login test",
+		"\"Add OAuth to the CLI.\"":                        "Add OAuth to the CLI",
+		"Title: Speed up grep tool\nextra line":            "Speed up grep tool",
+		"**Refactor the agent loop**":                      "Refactor the agent loop",
+		"one two three four five six seven eight nine ten": "one two three four five six seven eight",
+		"\n\n  修复构建错误  \n":                                 "修复构建错误",
+	}
+	for in, want := range cases {
+		if got, err := CleanTitle(in); err != nil || got != want {
+			t.Errorf("CleanTitle(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := CleanTitle("  \n \"\" "); err == nil {
+		t.Error("an empty title must fail")
+	}
+}
+
+func TestRuntimeSessionTitle(t *testing.T) {
+	p := &scripted{seen: map[string][]llm.Request{}, turns: map[string][]llm.Message{
+		"main": {{Role: llm.RoleAssistant, Content: "\"Explain the agent loop.\""}},
+	}}
+	rt := newTestRuntime(t, p, ModeDefault)
+	title, err := rt.SessionTitle(context.Background(), "please read the whole project and explain how the agent loop works")
+	if err != nil || title != "Explain the agent loop" {
+		t.Fatalf("title = %q, err = %v", title, err)
+	}
+	req := p.seen["main"][0]
+	if !strings.Contains(req.System, "name chat sessions") || !strings.Contains(req.Messages[0].Content, "at most 8 words") || len(req.Tools) != 0 {
+		t.Fatalf("title request = %+v", req)
+	}
+}
