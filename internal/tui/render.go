@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
@@ -263,4 +264,41 @@ func titledBox(content, title string, width int) string {
 	dashes := outer - lipgloss.Width(title) - 5
 	top := styleDim.Render("╭"+strings.Repeat("─", dashes)+" ") + title + styleDim.Render(" ─╮")
 	return top + "\n" + body
+}
+
+func wrappedRows(runes []rune, width int) int {
+	if width <= 0 {
+		return 1
+	}
+	rows, lineWidth, lineUsed, spaces := 1, 0, false, 0
+	var word []rune
+	for _, r := range runes {
+		if unicode.IsSpace(r) {
+			spaces++
+		} else {
+			word = append(word, r)
+		}
+		wordWidth := ansi.StringWidth(string(word))
+		if 0 < spaces {
+			if width < lineWidth+wordWidth+spaces {
+				rows++
+				lineWidth = wordWidth + spaces
+			} else {
+				lineWidth += wordWidth + spaces
+			}
+			lineUsed = true
+			spaces, word = 0, nil
+			continue
+		}
+		if width < wordWidth+ansi.StringWidth(string(word[len(word)-1])) {
+			if lineUsed {
+				rows++
+			}
+			lineWidth, lineUsed, word = wordWidth, true, nil
+		}
+	}
+	if width <= lineWidth+ansi.StringWidth(string(word))+spaces {
+		rows++
+	}
+	return rows
 }

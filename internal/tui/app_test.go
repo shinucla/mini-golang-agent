@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -33,7 +35,10 @@ func (echoProvider) ListModels(context.Context) ([]llm.Model, error) {
 func (echoProvider) Chat(_ context.Context, req llm.Request, onDelta func(llm.Delta)) (*llm.Response, error) {
 	last := req.Messages[len(req.Messages)-1]
 	onDelta(llm.Delta{Text: "echo"})
-	return &llm.Response{Message: llm.Message{Role: llm.RoleAssistant, Content: "echo: " + last.Content}}, nil
+	return &llm.Response{
+		Message: llm.Message{Role: llm.RoleAssistant, Content: "echo: " + last.Content},
+		Usage:   llm.Usage{InputTokens: 1000, OutputTokens: 200},
+	}, nil
 }
 
 func newTestApp(t *testing.T) *App {
@@ -78,6 +83,7 @@ func TestTurnRunsAndStoresHistory(t *testing.T) {
 	app := newTestApp(t)
 	app.rt.Cfg.Providers["fake"] = config.ProviderConfig{Local: true}
 	app.rt.RegisterProvider("fake", echoProvider{})
+	app.send = func(msg tea.Msg) { app.Update(msg) }
 
 	typeText(app, "hello")
 	if !strings.Contains(app.View(), "hello") {
@@ -91,8 +97,12 @@ func TestTurnRunsAndStoresHistory(t *testing.T) {
 	if app.busy || len(app.history) != 2 || app.history[1].Content != "echo: hello" {
 		t.Fatalf("busy=%v history=%+v", app.busy, app.history)
 	}
-	if _, err := os.Stat(filepath.Join(config.SessionsDir(), app.session.ID+".json")); err != nil {
+	saved, err := agent.LoadSession(config.SessionsDir(), app.session.ID)
+	if err != nil {
 		t.Fatalf("session not saved: %v", err)
+	}
+	if saved.Usage.InputTokens != 1000 || saved.Usage.OutputTokens != 200 || saved.ContextTokens != 1200 {
+		t.Fatalf("usage not saved: %+v ctx=%d", saved.Usage, saved.ContextTokens)
 	}
 }
 
@@ -487,5 +497,99 @@ func TestInputBoxShowsSessionNameOnTopBorder(t *testing.T) {
 	app.session.Title = "z - golang mini agent"
 	if !strings.Contains(app.View(), "z - golang mini agent ─╮") {
 		t.Fatalf("session name not on the input box:\n%s", app.View())
+	}
+}
+
+func TestWrappedRowsMatchesTextarea(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 2))
+	pieces := []string{"a", "go", "mga", "agent", "supercalifragilistic", "修复", "构建错误", " ", "  ", "x"}
+	for i := range 2000 {
+		var b strings.Builder
+		for range rng.IntN(30) {
+			b.WriteString(pieces[rng.IntN(len(pieces))])
+			if rng.IntN(3) == 0 {
+				b.WriteString(" ")
+			}
+		}
+		line := b.String()
+		width := 5 + rng.IntN(60)
+		ta := textarea.New()
+		ta.ShowLineNumbers = false
+		ta.CharLimit = 0
+		ta.MaxHeight = 0
+		ta.SetPromptFunc(2, func(int) string { return "> " })
+		ta.SetWidth(width + 2)
+		ta.SetHeight(100)
+		ta.SetValue(line)
+		if got, want := wrappedRows([]rune(line), ta.Width()), ta.LineInfo().Height; got != want {
+			t.Fatalf("case %d width %d %q: wrappedRows = %d, textarea = %d", i, ta.Width(), line, got, want)
+		}
+	}
+}
+
+func TestInputBoxGrowsWithWrappedText(t *testing.T) {
+	app := newTestApp(t)
+	app.Update(tea.WindowSizeMsg{Width: 40, Height: 40})
+	if app.input.Height() != 1 {
+		t.Fatalf("empty input height = %d", app.input.Height())
+	}
+	text := "first please read the whole project and then explain how the agent loop works end"
+	typeText(app, text)
+	if app.input.Height() < 3 {
+		t.Fatalf("height = %d for %d chars at width %d", app.input.Height(), len(text), app.input.Width())
+	}
+	view := app.View()
+	if !strings.Contains(view, "> first please") || !strings.Contains(view, "works end") {
+		t.Fatalf("wrapped input not fully visible:\n%s", view)
+	}
+
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if app.input.Height() != 1 {
+		t.Fatalf("height after widening = %d", app.input.Height())
+	}
+	for range text {
+		app.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	if app.input.Height() != 1 || app.input.Value() != "" {
+		t.Fatalf("height after delete = %d", app.input.Height())
+	}
+	typeText(app, strings.Repeat("word ", 400))
+	if app.input.Height() != maxInputHeight {
+		t.Fatalf("height must stop at %d, got %d", maxInputHeight, app.input.Height())
+	}
+}
+
+func TestOpeningASessionRestoresTokensAndContext(t *testing.T) {
+	app := newTestApp(t)
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	old := saveTestSession(t, app.rt.Cwd, "earlier work", "q")
+	old.Provider, old.Model = "fake", "gpt-5"
+	old.Usage = llm.Usage{InputTokens: 40000, OutputTokens: 12000}
+	old.ContextTokens = 52000
+	if err := old.Save(config.SessionsDir()); err != nil {
+		t.Fatal(err)
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	selectSession(t, app, old.ID)
+	app.Update(tea.KeyMsg{Type: tea.KeyRight})
+	if line := strings.Split(app.statusLine(), "\n")[0]; !strings.Contains(line, "gpt-5 (fake) | 52.0k tokens | 87% ctx remaining") {
+		t.Fatalf("usage not restored: %q", line)
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	typeText(app, "n")
+	if line := strings.Split(app.statusLine(), "\n")[0]; !strings.Contains(line, "| 0 tokens | 100% ctx remaining") {
+		t.Fatalf("a new session must start at zero: %q", line)
+	}
+
+	resumed, err := agent.LoadSession(config.SessionsDir(), old.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := newApp(app.rt, resumed, "", true)
+	started.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if line := strings.Split(started.statusLine(), "\n")[0]; !strings.Contains(line, "52.0k tokens | 87% ctx remaining") {
+		t.Fatalf("usage not restored at startup: %q", line)
 	}
 }

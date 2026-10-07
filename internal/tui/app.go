@@ -143,6 +143,8 @@ func newApp(rt *agent.Runtime, session *agent.Session, initialPrompt string, dar
 		height:        40,
 		session:       session,
 		history:       slices.Clone(session.Messages),
+		usage:         session.Usage,
+		contextTokens: session.ContextTokens,
 		env:           &tools.Env{Cwd: rt.Cwd},
 		input:         ta,
 		spin:          sp,
@@ -216,6 +218,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.input.SetWidth(max(a.width-6, 10))
+		a.editInput(func() {})
 		return nil
 	case printDoneMsg:
 		a.printing = false
@@ -344,8 +347,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		if a.input.Value() != "" {
-			a.input.Reset()
-			a.resizeInput()
+			a.editInput(a.input.Reset)
 			return nil
 		}
 		if time.Since(a.lastCtrlC) < 2*time.Second {
@@ -363,8 +365,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 			a.interrupt()
 			return nil
 		}
-		a.input.Reset()
-		a.resizeInput()
+		a.editInput(a.input.Reset)
 		return nil
 	case "left":
 		if a.input.Value() == "" {
@@ -376,14 +377,13 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case "enter":
 		value := a.input.Value()
 		if strings.HasSuffix(value, "\\") {
-			a.input.SetValue(strings.TrimSuffix(value, "\\") + "\n")
-			a.resizeInput()
+			a.editInput(func() { a.input.SetValue(strings.TrimSuffix(value, "\\") + "\n") })
 			return nil
 		}
 		return a.submit(value)
 	case "tab":
 		if s := a.suggestions(); len(s) != 0 {
-			a.input.SetValue("/" + s[0].name + " ")
+			a.editInput(func() { a.input.SetValue("/" + s[0].name + " ") })
 			return nil
 		}
 	case "up":
@@ -396,8 +396,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	var cmd tea.Cmd
-	a.input, cmd = a.input.Update(msg)
-	a.resizeInput()
+	a.editInput(func() { a.input, cmd = a.input.Update(msg) })
 	return cmd
 }
 
@@ -415,17 +414,24 @@ func (a *App) recallHistory(step int) bool {
 		return true
 	}
 	a.historyPos = pos
-	if pos == len(a.inputHistory) {
-		a.input.Reset()
-	} else {
-		a.input.SetValue(a.inputHistory[pos])
-	}
-	a.resizeInput()
+	a.editInput(func() {
+		if pos == len(a.inputHistory) {
+			a.input.Reset()
+		} else {
+			a.input.SetValue(a.inputHistory[pos])
+		}
+	})
 	return true
 }
 
-func (a *App) resizeInput() {
-	a.input.SetHeight(min(max(a.input.LineCount(), 1), maxInputHeight))
+func (a *App) editInput(edit func()) {
+	a.input.SetHeight(maxInputHeight)
+	edit()
+	rows := 0
+	for _, line := range strings.Split(a.input.Value(), "\n") {
+		rows += wrappedRows([]rune(line), a.input.Width())
+	}
+	a.input.SetHeight(min(max(rows, 1), maxInputHeight))
 }
 
 func (a *App) approvalKey(ap *pendingApproval, msg tea.KeyMsg) tea.Cmd {
@@ -460,8 +466,7 @@ func (a *App) submit(text string) tea.Cmd {
 	if text == "" {
 		return nil
 	}
-	a.input.Reset()
-	a.resizeInput()
+	a.editInput(a.input.Reset)
 	if len(a.inputHistory) == 0 || a.inputHistory[len(a.inputHistory)-1] != text {
 		a.inputHistory = append(a.inputHistory, text)
 	}
@@ -569,6 +574,8 @@ func (a *App) saveSession() {
 	provider, model := a.rt.Current()
 	a.session.Provider, a.session.Model = provider, model
 	a.session.Messages = a.history
+	a.session.Usage = a.usage
+	a.session.ContextTokens = a.contextTokens
 	if err := a.session.Save(config.SessionsDir()); err != nil {
 		a.notice = "could not save session: " + err.Error()
 	}

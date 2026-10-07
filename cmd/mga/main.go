@@ -182,11 +182,19 @@ func isTerminal(f *os.File) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-type printObserver struct{ verbose bool }
+type printObserver struct {
+	verbose bool
+	session *agent.Session
+}
 
 func (printObserver) Delta(llm.Delta)              {}
 func (printObserver) AssistantMessage(llm.Message) {}
-func (printObserver) Usage(llm.Usage)              {}
+
+func (o printObserver) Usage(u llm.Usage) {
+	o.session.Usage.InputTokens += u.InputTokens
+	o.session.Usage.OutputTokens += u.OutputTokens
+	o.session.ContextTokens = u.InputTokens + u.OutputTokens
+}
 
 func (o printObserver) ToolStart(call llm.ToolCall, t tools.Tool) {
 	if o.verbose {
@@ -225,7 +233,7 @@ func runPrint(ctx context.Context, rt *agent.Runtime, session *agent.Session, pr
 	ag.StopOnDeny = false
 	before := len(session.Messages)
 	history := append(session.Messages, llm.Message{Role: llm.RoleUser, Content: prompt})
-	msgs, runErr := ag.Run(ctx, history, printObserver{verbose: verbose})
+	msgs, runErr := ag.Run(ctx, history, printObserver{verbose: verbose, session: session})
 	session.Provider, session.Model = rt.Current()
 	session.Messages = msgs
 	if err := session.Save(config.SessionsDir()); err != nil && verbose {

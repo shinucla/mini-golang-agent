@@ -218,8 +218,8 @@ func (a *App) loadSession(s *agent.Session) {
 	a.session = s
 	a.history = slices.Clone(s.Messages)
 	a.todos = nil
-	a.usage = llm.Usage{}
-	a.contextTokens = 0
+	a.usage = s.Usage
+	a.contextTokens = s.ContextTokens
 	a.env = &tools.Env{Cwd: a.rt.Cwd}
 	a.wireEnv()
 	if s.Provider != "" && s.Model != "" {

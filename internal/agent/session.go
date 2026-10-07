@@ -24,6 +24,9 @@ type Session struct {
 	Created  time.Time     `json:"created"`
 	Updated  time.Time     `json:"updated"`
 	Messages []llm.Message `json:"messages"`
+
+	Usage         llm.Usage `json:"usage"`
+	ContextTokens int       `json:"context_tokens"`
 }
 
 func NewSession(cwd string) *Session {
