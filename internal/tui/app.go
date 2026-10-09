@@ -211,7 +211,7 @@ func (a *App) Init() tea.Cmd {
 }
 
 func (a *App) hasSavedSessions() bool {
-	sessions, err := agent.ListSessionsUnder(config.SessionsDir(), a.rt.Cwd)
+	sessions, err := agent.ListSessions(config.SessionsDir(), a.rt.Cwd)
 	return err == nil && 0 < len(sessions)
 }
 
@@ -741,9 +741,7 @@ func (a *App) saveSession() {
 
 func (a *App) saveRun(r *sessionRun) {
 	r.session.Provider, r.session.Model = r.provider, r.model
-	if r.session.Cwd == "" {
-		r.session.Cwd = a.rt.Cwd
-	}
+	r.session.Cwd = a.rt.Cwd
 	r.session.Messages = r.history
 	r.session.Usage = r.usage
 	r.session.ContextTokens = r.contextTokens

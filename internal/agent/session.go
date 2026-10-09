@@ -128,19 +128,6 @@ func LoadSession(dir, id string) (*Session, error) {
 }
 
 func ListSessions(dir, cwd string) ([]*Session, error) {
-	return listSessions(dir, func(s *Session) bool { return cwd == "" || s.Cwd == cwd })
-}
-
-func ListSessionsUnder(dir, root string) ([]*Session, error) {
-	return listSessions(dir, func(s *Session) bool { return Within(root, s.Cwd) })
-}
-
-func Within(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && !filepath.IsAbs(rel) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func listSessions(dir string, keep func(*Session) bool) ([]*Session, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -155,7 +142,7 @@ func listSessions(dir string, keep func(*Session) bool) ([]*Session, error) {
 			continue
 		}
 		s, err := LoadSession(dir, id)
-		if err != nil || !keep(s) {
+		if err != nil || (cwd != "" && s.Cwd != cwd) {
 			continue
 		}
 		out = append(out, s)
