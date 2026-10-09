@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -31,6 +34,36 @@ type homeView struct {
 	confirmDelete bool
 	nameInput     textinput.Model
 	task          *agentsView
+}
+
+var validSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+func (a *App) resumeSession(id string) tea.Cmd {
+	if id == a.session.ID {
+		a.emit(formatNote("Already in session " + styleBold.Render(sessionName(a.session))))
+		return nil
+	}
+	cmd := a.openHome()
+	if a.busy {
+		a.home.err = "A turn is running. Press esc first, then resume."
+		return cmd
+	}
+	if !validSessionID.MatchString(id) {
+		a.home.err = fmt.Sprintf("Session %q does not exist. Pick one from the list.", id)
+		return cmd
+	}
+	s, err := agent.LoadSession(config.SessionsDir(), id)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		a.home.err = fmt.Sprintf("Session %q does not exist. Pick one from the list.", id)
+		return cmd
+	case err != nil:
+		a.home.err = fmt.Sprintf("Session %q could not be opened: %v", id, err)
+		return cmd
+	}
+	a.closeOverlay()
+	a.loadSession(s)
+	return a.learnContextWindow()
 }
 
 func (a *App) openHome() tea.Cmd {

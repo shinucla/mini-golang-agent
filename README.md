@@ -113,7 +113,7 @@ Press `←` when the input is empty. The list shows the sessions of this directo
 | `x` | Stop the agent |
 | `esc` | Back to the current session |
 
-`/resume` opens the same list.
+`/resume` opens the same list. `/resume <session id>` opens that session at once; if no session has that id, mga opens the list and says so in red.
 
 mga names each new session for you. After your first message, the current model writes a title of at most 8 words that captures the idea, and the title shows on the input box and in the list. Until the title arrives, or if the model cannot make one, the session uses the start of your first message. A name you set with `r` is never replaced.
 

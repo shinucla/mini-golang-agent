@@ -326,7 +326,7 @@ Files:
 
 Overlays: `App.view` is `viewChat`, `viewModels`, `viewAgents`, or `viewHome`. A pending approval has priority over every view, for keys and for rendering.
 
-Slash commands: `/help`, `/model [ref]`, `/agents`, `/tasks`, `/mode [mode]`, `/permissions`, `/clear`, `/compact [focus]`, `/resume`, `/init`, `/status`, `/exit` (plus aliases: `/models`, `/bashes`, `/new`, `/continue`, `/sessions`, `/quit`, `/q`, `/?`). `/resume` opens the home view.
+Slash commands: `/help`, `/model [ref]`, `/agents`, `/tasks`, `/mode [mode]`, `/permissions`, `/clear`, `/compact [focus]`, `/resume`, `/init`, `/status`, `/exit` (plus aliases: `/models`, `/bashes`, `/new`, `/continue`, `/sessions`, `/quit`, `/q`, `/?`). `/resume` opens the home view; `/resume <id>` (`resumeSession` in home.go) opens that session directly, from any folder, and an id that is not a saved session (or has characters outside `[A-Za-z0-9_-]`) opens the home view with a red "Session \"<id>\" does not exist" line that clears on the next key. `/resume` with the current id only prints "Already in session".
 
 Keys in chat: ← on an empty input opens the home view; Enter sends (queues while busy); Ctrl+J, Alt+Enter, or `\` + Enter for a new line; Esc interrupts or clears; Shift+Tab cycles the mode; Up/Down recall earlier inputs; Tab completes a slash command; Ctrl+C interrupts, clears, or (twice in 2 s) quits; Ctrl+D on empty input quits.
 

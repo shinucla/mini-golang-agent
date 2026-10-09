@@ -29,7 +29,7 @@ var commands = []command{
 	{"permissions", "", "Show the permission mode and rules"},
 	{"clear", "", "Start a new conversation"},
 	{"compact", "[focus]", "Summarize the conversation to free context"},
-	{"resume", "", "List sessions and agents (or press ← on an empty input)"},
+	{"resume", "[session id]", "Open a session by id, or list sessions and agents (← on an empty input)"},
 	{"init", "", "Create an MGA.md file with notes about this project"},
 	{"status", "", "Show provider, model, session, and token usage"},
 	{"exit", "", "Quit mga"},
@@ -109,7 +109,10 @@ func (a *App) runCommand(text string) tea.Cmd {
 	case "compact":
 		return a.compact(arg)
 	case "resume", "continue", "sessions":
-		return a.openHome()
+		if arg == "" {
+			return a.openHome()
+		}
+		return a.resumeSession(arg)
 	case "init":
 		if a.busy {
 			a.queue = append(a.queue, initPrompt)
