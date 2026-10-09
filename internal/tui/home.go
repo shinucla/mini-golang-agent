@@ -289,12 +289,21 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		a.closeOverlay()
 		return nil
 	case "up":
+		if !h.searching && a.moveSuggestion(-1) {
+			return nil
+		}
 		h.cursor = max(h.cursor-1, 0)
 		return nil
 	case "down":
+		if !h.searching && a.moveSuggestion(1) {
+			return nil
+		}
 		h.cursor = min(h.cursor+1, max(len(items)-1, 0))
 		return nil
 	case "enter":
+		if !h.searching && a.completeOnEnter() {
+			return nil
+		}
 		text := strings.TrimSpace(a.input.Value())
 		switch {
 		case text == "" || h.searching:
@@ -304,8 +313,7 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		}
 		return h.startNew(a, text)
 	case "tab":
-		if s := a.suggestions(); len(s) != 0 && !h.searching {
-			a.editInput(func() { a.input.SetValue("/" + s[0].name + " ") })
+		if !h.searching && a.completeSuggestion() {
 			return nil
 		}
 	case "right":

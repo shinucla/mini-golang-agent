@@ -64,6 +64,48 @@ func (a *App) suggestions() []command {
 	return out
 }
 
+func (a *App) suggestIndex(n int) int {
+	if a.suggestFor != a.input.Value() {
+		return 0
+	}
+	return min(a.suggestPos, max(n-1, 0))
+}
+
+func (a *App) selectedSuggestion() (command, bool) {
+	s := a.suggestions()
+	if len(s) == 0 {
+		return command{}, false
+	}
+	return s[a.suggestIndex(len(s))], true
+}
+
+func (a *App) moveSuggestion(step int) bool {
+	s := a.suggestions()
+	if len(s) == 0 || a.browsingHistory() {
+		return false
+	}
+	a.suggestPos = (a.suggestIndex(len(s)) + step + len(s)) % len(s)
+	a.suggestFor = a.input.Value()
+	return true
+}
+
+func (a *App) completeSuggestion() bool {
+	c, ok := a.selectedSuggestion()
+	if ok {
+		a.editInput(func() { a.input.SetValue("/" + c.name + " ") })
+	}
+	return ok
+}
+
+func (a *App) completeOnEnter() bool {
+	c, ok := a.selectedSuggestion()
+	return ok && a.input.Value() != "/"+c.name && a.completeSuggestion()
+}
+
+func (a *App) browsingHistory() bool {
+	return a.historyPos < len(a.inputHistory) && a.input.Value() == a.inputHistory[a.historyPos]
+}
+
 func (a *App) runCommand(text string) tea.Cmd {
 	name, arg, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
 	arg = strings.TrimSpace(arg)
@@ -138,8 +180,8 @@ func helpText() string {
 		{"esc", "interrupt the agent, or clear the input"},
 		{"shift+tab", "cycle the permission mode: default → accept edits → plan → auto → bypass"},
 		{"left", "open the session and agent list (when the input is empty)"},
-		{"up/down", "browse earlier inputs"},
-		{"tab", "complete a slash command"},
+		{"up/down", "browse earlier inputs, or select a command in the slash command list"},
+		{"tab", "complete the selected slash command"},
 		{"ctrl+c twice", "quit"},
 	} {
 		fmt.Fprintf(&b, "  %s %s\n", styleAccent.Render(fmt.Sprintf("%-16s", k[0])), k[1])

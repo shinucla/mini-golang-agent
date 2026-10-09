@@ -25,6 +25,7 @@ import (
 
 const (
 	maxInputHeight  = 10
+	suggestionRows  = 8
 	liveStreamLines = 14
 	replayLimit     = 200
 	clearScrollback = "\x1b[3J"
@@ -68,6 +69,8 @@ type App struct {
 	spin         spinner.Model
 	inputHistory []string
 	historyPos   int
+	suggestPos   int
+	suggestFor   string
 
 	view   viewKind
 	picker *modelPicker
@@ -465,6 +468,9 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		a.setMode(a.rt.Perms.Mode().Next())
 		return nil
 	case "enter":
+		if a.completeOnEnter() {
+			return nil
+		}
 		value := a.input.Value()
 		if strings.HasSuffix(value, "\\") {
 			a.editInput(func() { a.input.SetValue(strings.TrimSuffix(value, "\\") + "\n") })
@@ -472,16 +478,15 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return a.submit(value)
 	case "tab":
-		if s := a.suggestions(); len(s) != 0 {
-			a.editInput(func() { a.input.SetValue("/" + s[0].name + " ") })
+		if a.completeSuggestion() {
 			return nil
 		}
 	case "up":
-		if a.recallHistory(-1) {
+		if a.moveSuggestion(-1) || a.recallHistory(-1) {
 			return nil
 		}
 	case "down":
-		if a.recallHistory(1) {
+		if a.moveSuggestion(1) || a.recallHistory(1) {
 			return nil
 		}
 	}
@@ -495,8 +500,7 @@ func (a *App) recallHistory(step int) bool {
 	if strings.Contains(value, "\n") || len(a.inputHistory) == 0 {
 		return false
 	}
-	browsing := a.historyPos < len(a.inputHistory) && value == a.inputHistory[a.historyPos]
-	if value != "" && !browsing {
+	if value != "" && !a.browsingHistory() {
 		return false
 	}
 	pos := a.historyPos + step
@@ -986,16 +990,16 @@ func isCommand(text string) bool {
 }
 
 func (a *App) suggestionLines() []string {
+	s := a.suggestions()
+	selected := a.suggestIndex(len(s))
+	start, end := window(len(s), selected, suggestionRows)
 	var lines []string
-	for i, c := range a.suggestions() {
-		if i == 8 {
-			break
-		}
-		name := fmt.Sprintf("/%-12s", c.name)
-		if i == 0 {
+	for i := start; i < end; i++ {
+		name := fmt.Sprintf("/%-12s", s[i].name)
+		if i == selected {
 			name = styleAccent.Render(name)
 		}
-		lines = append(lines, clip("  "+name+" "+styleDim.Render(c.desc), a.width))
+		lines = append(lines, clip("  "+name+" "+styleDim.Render(s[i].desc), a.width))
 	}
 	return lines
 }
