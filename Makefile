@@ -46,9 +46,12 @@ check: lint test-race ## Run lint and the race tests
 tidy: go-check ## Tidy go.mod and go.sum
 	go mod tidy
 
-install: test ## Test, build, and install mga to ~/.local/bin (no sudo); change it with PREFIX=... or INSTALL_DIR=...
+install: go-check ## Test, build, and install mga to ~/.local/bin (no sudo); change it with PREFIX=... or INSTALL_DIR=...
 	@set -e; \
-	go build -trimpath -ldflags "-s -w" -o $(BIN_DIR)/$(BINARY) $(PKG); \
+	modfile="$$(sh scripts/modfile.sh)"; \
+	echo "go test $${modfile:+$$modfile }./..."; \
+	go test $$modfile ./...; \
+	go build $$modfile -trimpath -ldflags "-s -w" -o $(BIN_DIR)/$(BINARY) $(PKG); \
 	if ! ./$(BIN_DIR)/$(BINARY) --help >/dev/null 2>&1; then \
 		echo "The new binary does not run. Nothing was installed."; exit 1; \
 	fi; \
