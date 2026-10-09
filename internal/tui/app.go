@@ -684,6 +684,7 @@ func (a *App) taskFinished(t agent.Task) tea.Cmd {
 func (a *App) saveSession() {
 	provider, model := a.rt.Current()
 	a.session.Provider, a.session.Model = provider, model
+	a.session.Cwd = a.rt.Cwd
 	a.session.Messages = a.history
 	a.session.Usage = a.usage
 	a.session.ContextTokens = a.contextTokens
