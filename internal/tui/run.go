@@ -62,6 +62,10 @@ func (r *sessionRun) waiting() bool {
 	return 0 < len(r.approvals)
 }
 
+func (r *sessionRun) empty() bool {
+	return !r.busy && len(r.history) == 0 && len(r.pending) == 0 && len(r.session.Messages) == 0
+}
+
 func (r *sessionRun) transcript() []llm.Message {
 	return append(slices.Clone(r.history), r.pending...)
 }

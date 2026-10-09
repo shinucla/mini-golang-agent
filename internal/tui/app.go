@@ -580,6 +580,9 @@ func (a *App) startRunTurn(r *sessionRun, text, display string) tea.Cmd {
 		return nil
 	}
 	firstRequest := needsTitle(r, text)
+	if firstRequest && r.session.Title == "" {
+		r.session.Title, r.session.TitleSource = tools.OneLine(text, 80), agent.TitleFromText
+	}
 	r.history = append(r.history, llm.Message{Role: llm.RoleUser, Content: text})
 	r.pending = nil
 	turn := agent.Turn{Owner: r.session.ID, Provider: r.provider, Model: r.model}

@@ -44,17 +44,20 @@ func TestSessionListInputBoxAndBottomBar(t *testing.T) {
 	}
 
 	h.send("slow background job")
-	if h.app.view != viewHome || h.app.sessionRun != current || h.app.input.Value() != "" {
-		t.Fatal("enter with text starts a new session and stays in the list")
+	started := h.app.sessionRun
+	if h.app.view != viewHome || started == current || h.app.input.Value() != "" {
+		t.Fatal("enter with text starts a new session, makes it current, and stays in the list")
 	}
-	var started *sessionRun
-	for _, r := range h.app.runs {
-		if r != current {
-			started = r
-		}
-	}
-	if started == nil || !started.busy || started.history[0].Content != "slow background job" {
+	if !started.busy || started.history[0].Content != "slow background job" {
 		t.Fatalf("the new session must run the message: %+v", started)
+	}
+	if _, kept := h.app.runs[current.session.ID]; kept || strings.Contains(h.view(), "(new session)") {
+		t.Fatalf("the empty placeholder session must be removed:\n%s", h.view())
+	}
+	for _, l := range strings.Split(h.view(), "\n") {
+		if strings.Contains(l, "● ") && !strings.Contains(l, "current") {
+			t.Fatalf("the ● must mark the current session only: %q", l)
+		}
 	}
 	if view := ansi.Strip(h.app.View()); !strings.Contains(view, "Working") {
 		t.Fatalf("the new session must show under Working:\n%s", view)
@@ -71,5 +74,40 @@ func TestSessionListInputBoxAndBottomBar(t *testing.T) {
 	h.key(tea.KeyEsc)
 	if h.app.view != viewChat || h.app.input.Placeholder != chatPlaceholder {
 		t.Fatal("esc clears the input, then leaves the list and restores the chat placeholder")
+	}
+}
+
+func TestStartFromListKeepsASessionWithMessages(t *testing.T) {
+	h := newHarness(t)
+	gate := make(chan struct{})
+	defer close(gate)
+	h.app.rt.RegisterProvider("fake", gatedProvider{gate: gate})
+	h.app.provider, h.app.model = "fake", "m"
+	h.send("first question")
+	h.until("the first answer", func() bool { return !h.app.busy && 2 <= len(h.app.history) })
+	previous := h.app.sessionRun
+
+	h.key(tea.KeyLeft)
+	h.send("slow second topic")
+	if h.app.sessionRun == previous {
+		t.Fatal("the new session must become current")
+	}
+	if _, kept := h.app.runs[previous.session.ID]; !kept {
+		t.Fatal("a session with messages must stay")
+	}
+	if !strings.Contains(h.view(), "fast: first question") && !strings.Contains(strings.Join(listNames(h.app), ","), sessionName(previous.session)) {
+		t.Fatalf("the previous session must stay in the list: %v", listNames(h.app))
+	}
+
+	h.app.printing = true
+	h.app.printQueue = nil
+	h.key(tea.KeyEsc)
+	if h.app.view != viewChat {
+		t.Fatal("esc leaves the list")
+	}
+	h.app.printing = false
+	h.app.loadSession(h.app.session)
+	if out := ansi.Strip(strings.Join(h.app.printQueue, "\n")); !strings.Contains(out, "slow second topic") {
+		t.Fatalf("the chat must show the new session:\n%s", out)
 	}
 }

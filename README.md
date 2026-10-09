@@ -101,7 +101,7 @@ The status bar under the input box has two lines:
 
 ### Sessions and agents list
 
-Press `←` when the input is empty. The list fills the screen and shows the sessions of this directory (● marks the current one) and the sub-agents of this run. The input box and the hint line stay at the bottom of the screen; `?` (with an empty input box) shows the full help in place of the hint line. Type a message and press `enter` to start a new session with it: the new session works in the background and shows under **Working**, and you stay in the list.
+Press `←` when the input is empty. The list fills the screen and shows the sessions of this directory (● marks the current one) and the sub-agents of this run. The input box and the hint line stay at the bottom of the screen; `?` (with an empty input box) shows the full help in place of the hint line. Type a message and press `enter` to start a new session with it: the new session becomes the current one (●), works in the background under **Working**, and you stay in the list. An empty "(new session)" placeholder disappears.
 
 Sessions run in parallel. Open the list or another session while a session works, and it keeps working in the background. The list shows three groups in this order: **Pinned**, **Working**, and **Recent**. A session that works shows under **Working** with a live indicator, and goes back to its own group and place when it finishes; a session that waits for your approval shows **⚠ needs input** and keeps waiting until you open it. The status bar of the session you are in counts the other sessions that work or wait. Quitting mga stops and saves every session.
 

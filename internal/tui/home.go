@@ -374,6 +374,14 @@ func (h *homeView) startNew(a *App, text string) tea.Cmd {
 	}
 	a.historyPos = len(a.inputHistory)
 	cmd := a.startRunTurn(r, text, "")
+	previous := a.sessionRun
+	a.sessionRun = r
+	a.rt.SetCurrent(r.provider, r.model)
+	a.resetScreen()
+	a.replay(r.transcript())
+	if previous.empty() {
+		delete(a.runs, previous.session.ID)
+	}
 	h.follow(a, s)
 	return cmd
 }
