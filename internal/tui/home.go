@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -60,6 +61,8 @@ var homeKeys = [][2]string{
 
 var validSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+const launchFolderLabel = "cwd: ./"
+
 func (a *App) resumeSession(id string) tea.Cmd {
 	if id == a.session.ID {
 		a.emit(formatNote("Already in session " + styleBold.Render(sessionName(a.session))))
@@ -99,7 +102,7 @@ func (a *App) openHome() tea.Cmd {
 }
 
 func (h *homeView) reload(a *App) {
-	sessions, err := agent.ListSessions(config.SessionsDir(), a.rt.Cwd)
+	sessions, err := agent.ListSessionsUnder(config.SessionsDir(), a.rt.Cwd)
 	h.err = ""
 	if err != nil {
 		h.err = err.Error()
@@ -631,22 +634,26 @@ func (h *homeView) row(a *App, item homeItem) string {
 	if !s.Updated.IsZero() {
 		updated = s.Updated.Format("2006-01-02 15:04")
 	}
-	model := s.Model
-	if s.Provider != "" {
-		model = s.Provider + ":" + s.Model
+	where := launchFolderLabel
+	if s.Cwd != "" {
+		if rel, err := filepath.Rel(a.rt.Cwd, s.Cwd); err == nil && rel != "." {
+			where = rel
+		}
 	}
 	messages := len(s.Messages)
 	if r, ok := a.runs[s.ID]; ok {
 		messages = len(r.history) + len(r.pending)
 	}
-	row := marker + fmt.Sprintf("%-40s ", clip(sessionName(s), 40)) + styleDim.Render(fmt.Sprintf("%-16s %4d msgs  %s", updated, messages, model))
+	head := marker + fmt.Sprintf("%-40s ", clip(sessionName(s), 40)) + styleDim.Render(fmt.Sprintf("%-16s %4d msgs  ", updated, messages))
+	tail := ""
 	if r, ok := a.runs[s.ID]; ok && r.busy {
-		row += "  " + a.workState(r)
+		tail += "  " + a.workState(r)
 	}
 	if s.ID == a.session.ID {
-		row += styleOK.Render("  current")
+		tail += styleOK.Render("  current")
 	}
-	return row
+	room := min(30, a.width-8-lipgloss.Width(head)-lipgloss.Width(tail))
+	return head + styleDim.Render(shortPath(where, max(room, 2))) + tail
 }
 
 func (a *App) working(s *agent.Session) bool {
@@ -662,4 +669,15 @@ func (a *App) workState(r *sessionRun) string {
 		return styleAccent.Render("⚠ needs input")
 	}
 	return a.spin.View() + styleAccent.Render(" working ") + styleDim.Render(time.Since(r.turnStart).Round(time.Second).String())
+}
+
+func shortPath(path string, width int) string {
+	if lipgloss.Width(path) <= width {
+		return path
+	}
+	parts := strings.Split(path, string(filepath.Separator))
+	if len(parts) <= 2 {
+		return clip(path, width)
+	}
+	return clip(parts[0]+"/.../"+parts[len(parts)-1], width)
 }

@@ -455,3 +455,22 @@ func TestRuntimeSessionTitle(t *testing.T) {
 		t.Fatalf("title request = %+v", req)
 	}
 }
+
+func TestWithin(t *testing.T) {
+	cases := []struct {
+		root, path string
+		want       bool
+	}{
+		{"/a/b", "/a/b", true},
+		{"/a/b", "/a/b/c/d", true},
+		{"/a/b", "/a/bc", false},
+		{"/a/b", "/a", false},
+		{"/a/b", "/x/y", false},
+		{"/a/b", "", false},
+	}
+	for _, c := range cases {
+		if got := Within(c.root, c.path); got != c.want {
+			t.Errorf("Within(%q, %q) = %v", c.root, c.path, got)
+		}
+	}
+}

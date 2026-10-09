@@ -252,7 +252,9 @@ func runPrint(ctx context.Context, rt *agent.Runtime, session *agent.Session, pr
 	history := append(session.Messages, llm.Message{Role: llm.RoleUser, Content: prompt})
 	msgs, runErr := ag.Run(ctx, history, printObserver{verbose: verbose, session: session})
 	session.Provider, session.Model = rt.Current()
-	session.Cwd = rt.Cwd
+	if session.Cwd == "" {
+		session.Cwd = rt.Cwd
+	}
 	session.Messages = msgs
 	if err := session.Save(config.SessionsDir()); err != nil && verbose {
 		fmt.Fprintln(os.Stderr, "mga: could not save session:", err)
