@@ -12,12 +12,18 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/kzhuang/mini-golang-agent/internal/agent"
 	"github.com/kzhuang/mini-golang-agent/internal/config"
 )
 
-const homeRows = 14
+const (
+	homeRows        = 14
+	chatPlaceholder = "Ask anything, or type / for commands"
+	homePlaceholder = "Type a message and press enter to start a new session"
+	homeHint        = "  →/enter open · ctrl+f search · ctrl+r rename · ctrl+x stop/delete · esc back · ? help"
+)
 
 type homeItem struct {
 	session *agent.Session
@@ -40,16 +46,17 @@ type homeView struct {
 }
 
 var homeKeys = [][2]string{
-	{"↑ ↓  k j", "move the cursor"},
+	{"↑ ↓", "move the cursor"},
 	{"shift+↑ ↓", "move the session up or down within its group (Pinned or Recent)"},
-	{"→  enter  l", "open the session, or the agent's live log"},
+	{"→  enter", "open the session, or the agent's live log"},
+	{"type + enter", "start a new session with that message; it works in the background"},
 	{"ctrl+f", "search sessions by name; esc clears the search"},
 	{"ctrl+r", "rename the session"},
 	{"ctrl+n", "start a new session"},
 	{"ctrl+t", "pin or unpin the session; pinned sessions stay on top"},
 	{"ctrl+x", "stop a running agent; press twice on a session to delete it; remove a finished agent"},
-	{"esc", "back to the current session"},
-	{"?", "show this list"},
+	{"esc", "close this help, clear the search or the input, or go back"},
+	{"?", "show this help (when the input is empty)"},
 }
 
 var validSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -85,10 +92,10 @@ func (a *App) resumeSession(id string) tea.Cmd {
 
 func (a *App) openHome() tea.Cmd {
 	h := &homeView{}
-	h.reload(a)
-	h.cursor = max(slices.IndexFunc(h.sessions, func(s *agent.Session) bool { return s.ID == a.session.ID }), 0)
 	a.home = h
 	a.view = viewHome
+	a.input.Placeholder = homePlaceholder
+	h.follow(a, a.session)
 	return nil
 }
 
@@ -270,6 +277,10 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 			}
 			return nil
 		}
+		if a.input.Value() != "" {
+			a.editInput(a.input.Reset)
+			return nil
+		}
 		a.closeOverlay()
 		return nil
 	case "ctrl+c":
@@ -281,8 +292,15 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 	case "down":
 		h.cursor = min(h.cursor+1, max(len(items)-1, 0))
 		return nil
-	case "right", "enter":
+	case "enter":
+		if text := strings.TrimSpace(a.input.Value()); text != "" && !h.searching {
+			return h.startNew(a, text)
+		}
 		return h.open(a, selected)
+	case "right":
+		if a.input.Value() == "" || h.searching {
+			return h.open(a, selected)
+		}
 	case "shift+up", "shift+down":
 		if !selected.isSession() {
 			h.err = "Only sessions can be moved."
@@ -337,17 +355,27 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		h.cursor = 0
 		return cmd
 	}
-	switch key {
-	case "?":
+	if key == "?" && a.input.Value() == "" {
 		h.showKeys = true
-	case "k":
-		h.cursor = max(h.cursor-1, 0)
-	case "j":
-		h.cursor = min(h.cursor+1, max(len(items)-1, 0))
-	case "l":
-		return h.open(a, selected)
+		return nil
 	}
-	return nil
+	var cmd tea.Cmd
+	a.editInput(func() { a.input, cmd = a.input.Update(msg) })
+	return cmd
+}
+
+func (h *homeView) startNew(a *App, text string) tea.Cmd {
+	s := agent.NewSession(a.rt.Cwd)
+	s.Provider, s.Model = a.provider, a.model
+	r := a.newRun(s)
+	a.editInput(a.input.Reset)
+	if len(a.inputHistory) == 0 || a.inputHistory[len(a.inputHistory)-1] != text {
+		a.inputHistory = append(a.inputHistory, text)
+	}
+	a.historyPos = len(a.inputHistory)
+	cmd := a.startRunTurn(r, text, "")
+	h.follow(a, s)
+	return cmd
 }
 
 func (h *homeView) cut(a *App, item homeItem, armed string) {
@@ -474,17 +502,29 @@ func sessionName(s *agent.Session) string {
 
 func (h *homeView) view(a *App) string {
 	width := max(a.width-2, 10)
-	if h.task != nil {
-		return stylePanel.Width(width).Render(h.task.taskDetailView(a))
-	}
-	if h.showKeys {
-		lines := []string{styleBold.Render("Session list keys"), ""}
+	box := titledBox(a.input.View(), "", width)
+	bottom := styleDim.Render(homeHint)
+	switch {
+	case h.showKeys:
+		lines := []string{styleBold.Render("Session list keys") + styleDim.Render("   any key closes this help")}
 		for _, k := range homeKeys {
 			lines = append(lines, "  "+styleAccent.Render(fmt.Sprintf("%-14s", k[0]))+k[1])
 		}
-		lines = append(lines, "", styleDim.Render("press any key to go back to the list"))
-		return stylePanel.Width(width).Height(max(a.height-2, 10)).Render(strings.Join(lines, "\n"))
+		bottom = styleBox.Width(width).Render(strings.Join(lines, "\n"))
+	case h.searching:
+		bottom = styleDim.Render("  type to filter · ↑/↓ move · enter open · ctrl keys still work · esc clear search")
 	}
+	height := max(a.height-lipgloss.Height(box)-lipgloss.Height(bottom), 6)
+	var panel string
+	if h.task != nil {
+		panel = stylePanel.Width(width).Height(height - 2).MaxHeight(height).Render(h.task.taskDetailView(a))
+	} else {
+		panel = h.list(a, width, height)
+	}
+	return panel + "\n" + box + "\n" + bottom
+}
+
+func (h *homeView) list(a *App, width, height int) string {
 	items := h.items(a)
 	h.cursor = min(h.cursor, max(len(items)-1, 0))
 	lines := []string{styleBold.Render("Sessions") + styleDim.Render("  "+a.rt.Cwd)}
@@ -495,7 +535,7 @@ func (h *homeView) view(a *App) string {
 		}
 	}
 	lines = append(lines, "")
-	start, end := window(len(items), h.cursor, max(a.height-16, homeRows))
+	start, end := window(len(items), h.cursor, max(height-14, 3))
 	grouped := slices.ContainsFunc(h.sessions, func(s *agent.Session) bool { return a.rank(s) != 2 })
 	group := func(item homeItem) string {
 		switch {
@@ -534,18 +574,13 @@ func (h *homeView) view(a *App) string {
 	if !h.searching && len(items) == len(h.sessions) {
 		lines = append(lines, "", styleBold.Render("Agents"), styleDim.Render("  No sub-agents in this run."))
 	}
-	switch {
-	case h.renaming:
+	if h.renaming {
 		lines = append(lines, "", h.nameInput.View(), styleDim.Render("enter save · esc cancel"))
-	case h.searching:
-		lines = append(lines, "", styleDim.Render("type to filter · ↑/↓ move · enter open · ctrl keys still work · esc clear search"))
-	default:
-		lines = append(lines, "", styleDim.Render("→/enter open · ctrl+f search · ctrl+r rename · ctrl+x stop/delete · esc back · ? help"))
 	}
 	if h.err != "" {
 		lines = append(lines, styleErr.Render(h.err))
 	}
-	return stylePanel.Width(width).Height(max(a.height-2, 10)).Render(strings.Join(lines, "\n"))
+	return stylePanel.Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(lines, "\n"))
 }
 
 func (h *homeView) row(a *App, item homeItem) string {

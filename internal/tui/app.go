@@ -121,7 +121,7 @@ func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string, server
 
 func newApp(rt *agent.Runtime, session *agent.Session, initialPrompt string, dark bool) *App {
 	ta := textarea.New()
-	ta.Placeholder = "Ask anything, or type / for commands"
+	ta.Placeholder = chatPlaceholder
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.MaxHeight = 0

@@ -57,6 +57,7 @@ func (a *App) openPicker() tea.Cmd {
 }
 
 func (a *App) closeOverlay() {
+	a.input.Placeholder = chatPlaceholder
 	a.view = viewChat
 	a.picker = nil
 	a.agents = nil

@@ -24,8 +24,12 @@ func TestSessionSearchDeleteAndKeys(t *testing.T) {
 		t.Fatalf("hint line:\n%s", ansi.Strip(app.View()))
 	}
 	typeText(app, "q")
-	if app.view != viewHome {
-		t.Fatal("q must no longer close the list")
+	if app.view != viewHome || app.input.Value() != "q" {
+		t.Fatal("q must type into the input box, not close the list")
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if app.view != viewHome || app.input.Value() != "" {
+		t.Fatal("esc with text in the input box must clear it and stay in the list")
 	}
 
 	app.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
