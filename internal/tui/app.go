@@ -214,11 +214,33 @@ func (a *App) Init() tea.Cmd {
 	if a.mcp != nil {
 		a.reportMCP()
 	}
-	cmds := []tea.Cmd{textarea.Blink}
+	cmds := []tea.Cmd{textarea.Blink, a.learnContextWindow()}
 	if a.initialPrompt != "" {
 		cmds = append(cmds, a.submit(a.initialPrompt))
 	}
 	return tea.Batch(cmds...)
+}
+
+func (a *App) learnContextWindow() tea.Cmd {
+	provider, model := a.rt.Current()
+	if model == "" || 0 < a.rt.ContextWindow(provider, model) {
+		return nil
+	}
+	rt := a.rt
+	return func() tea.Msg {
+		p, err := rt.Provider(provider)
+		if err != nil {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(rt.BaseCtx, listTimeout)
+		defer cancel()
+		models, err := p.ListModels(ctx)
+		if err != nil {
+			return nil
+		}
+		rt.RememberModels(provider, models)
+		return contextWindowMsg{}
+	}
 }
 
 func (a *App) emit(s string) {
@@ -331,6 +353,8 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.compactDone(msg)
 	case titleMsg:
 		a.applyTitle(msg)
+		return nil
+	case contextWindowMsg:
 		return nil
 	case editorDoneMsg:
 		if msg.err != nil {

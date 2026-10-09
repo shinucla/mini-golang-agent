@@ -184,7 +184,7 @@ func (h *homeView) open(a *App, item homeItem) tea.Cmd {
 	}
 	a.closeOverlay()
 	a.loadSession(item.session)
-	return nil
+	return a.learnContextWindow()
 }
 
 func (h *homeView) delete(a *App, s *agent.Session) {

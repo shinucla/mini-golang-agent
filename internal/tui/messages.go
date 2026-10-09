@@ -36,10 +36,11 @@ type (
 		reply chan agent.Decision
 		ctx   context.Context
 	}
-	tasksChangedMsg struct{}
-	mcpChangedMsg   struct{}
-	taskFinishedMsg agent.Task
-	modelsLoadedMsg struct {
+	tasksChangedMsg  struct{}
+	mcpChangedMsg    struct{}
+	contextWindowMsg struct{}
+	taskFinishedMsg  agent.Task
+	modelsLoadedMsg  struct {
 		provider string
 		models   []llm.Model
 		err      error
