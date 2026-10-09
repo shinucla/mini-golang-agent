@@ -551,7 +551,7 @@ func (a *App) submit(text string) tea.Cmd {
 		a.inputHistory = append(a.inputHistory, text)
 	}
 	a.historyPos = len(a.inputHistory)
-	if strings.HasPrefix(text, "/") && !strings.Contains(strings.Fields(text)[0][1:], "/") {
+	if isCommand(text) {
 		return a.runCommand(text)
 	}
 	if a.busy {
@@ -867,18 +867,7 @@ func (a *App) chatView() string {
 	}
 	box := titledBox(a.input.View(), a.session.Title, max(a.width-2, 10))
 	parts = append(parts, box, a.statusLine())
-	if s := a.suggestions(); len(s) != 0 {
-		for i, c := range s {
-			if i == 8 {
-				break
-			}
-			name := fmt.Sprintf("/%-12s", c.name)
-			if i == 0 {
-				name = styleAccent.Render(name)
-			}
-			parts = append(parts, clip("  "+name+" "+styleDim.Render(c.desc), a.width))
-		}
-	}
+	parts = append(parts, a.suggestionLines()...)
 	return strings.Join(parts, "\n")
 }
 
@@ -980,4 +969,23 @@ func toolTitle(tool string) string {
 		return "Fetch URL"
 	}
 	return displayToolName(tool)
+}
+
+func isCommand(text string) bool {
+	return strings.HasPrefix(text, "/") && !strings.Contains(strings.Fields(text)[0][1:], "/")
+}
+
+func (a *App) suggestionLines() []string {
+	var lines []string
+	for i, c := range a.suggestions() {
+		if i == 8 {
+			break
+		}
+		name := fmt.Sprintf("/%-12s", c.name)
+		if i == 0 {
+			name = styleAccent.Render(name)
+		}
+		lines = append(lines, clip("  "+name+" "+styleDim.Render(c.desc), a.width))
+	}
+	return lines
 }

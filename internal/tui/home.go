@@ -293,10 +293,19 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		h.cursor = min(h.cursor+1, max(len(items)-1, 0))
 		return nil
 	case "enter":
-		if text := strings.TrimSpace(a.input.Value()); text != "" && !h.searching {
-			return h.startNew(a, text)
+		text := strings.TrimSpace(a.input.Value())
+		switch {
+		case text == "" || h.searching:
+			return h.open(a, selected)
+		case isCommand(text):
+			return h.command(a, text)
 		}
-		return h.open(a, selected)
+		return h.startNew(a, text)
+	case "tab":
+		if s := a.suggestions(); len(s) != 0 && !h.searching {
+			a.editInput(func() { a.input.SetValue("/" + s[0].name + " ") })
+			return nil
+		}
 	case "right":
 		if a.input.Value() == "" || h.searching {
 			return h.open(a, selected)
@@ -362,6 +371,23 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 	var cmd tea.Cmd
 	a.editInput(func() { a.input, cmd = a.input.Update(msg) })
 	return cmd
+}
+
+func (h *homeView) command(a *App, text string) tea.Cmd {
+	a.editInput(a.input.Reset)
+	if len(a.inputHistory) == 0 || a.inputHistory[len(a.inputHistory)-1] != text {
+		a.inputHistory = append(a.inputHistory, text)
+	}
+	a.historyPos = len(a.inputHistory)
+	name, arg, _ := strings.Cut(strings.TrimPrefix(text, "/"), " ")
+	switch name {
+	case "resume", "continue", "sessions":
+		if strings.TrimSpace(arg) == "" {
+			return nil
+		}
+	}
+	a.closeOverlay()
+	return a.runCommand(text)
 }
 
 func (h *homeView) startNew(a *App, text string) tea.Cmd {
@@ -521,6 +547,8 @@ func (h *homeView) view(a *App) string {
 		bottom = styleBox.Width(width).Render(strings.Join(lines, "\n"))
 	case h.searching:
 		bottom = styleDim.Render("  type to filter · ↑/↓ move · enter open · ctrl keys still work · esc clear search")
+	case 0 < len(a.suggestions()):
+		bottom = strings.Join(a.suggestionLines(), "\n")
 	}
 	height := max(a.height-lipgloss.Height(box)-lipgloss.Height(bottom), 6)
 	var panel string
