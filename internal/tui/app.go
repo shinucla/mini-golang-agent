@@ -202,7 +202,17 @@ func (a *App) Init() tea.Cmd {
 	if a.initialPrompt != "" {
 		cmds = append(cmds, a.submit(a.initialPrompt))
 	}
+	if a.initialPrompt == "" && a.sessionRun.empty() && a.hasSavedSessions() {
+		a.openHome()
+		a.alt = true
+		cmds = append(cmds, tea.EnterAltScreen)
+	}
 	return tea.Batch(cmds...)
+}
+
+func (a *App) hasSavedSessions() bool {
+	sessions, err := agent.ListSessions(config.SessionsDir(), a.rt.Cwd)
+	return err == nil && 0 < len(sessions)
 }
 
 func (a *App) learnContextWindow() tea.Cmd {
