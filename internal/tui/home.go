@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -27,13 +28,29 @@ type homeItem struct {
 func (i homeItem) isSession() bool { return i.session != nil }
 
 type homeView struct {
-	sessions      []*agent.Session
-	cursor        int
-	err           string
-	renaming      bool
-	confirmDelete bool
-	nameInput     textinput.Model
-	task          *agentsView
+	sessions    []*agent.Session
+	cursor      int
+	err         string
+	renaming    bool
+	armedDelete string
+	nameInput   textinput.Model
+	task        *agentsView
+	showKeys    bool
+	searching   bool
+	search      textinput.Model
+}
+
+var homeKeys = [][2]string{
+	{"↑ ↓  k j", "move the cursor"},
+	{"shift+↑ ↓", "move the session up or down within its group (Pinned or Recent)"},
+	{"→  enter  l", "open the session, or the agent's live log"},
+	{"ctrl+f", "search sessions by name; esc clears the search"},
+	{"ctrl+r", "rename the session"},
+	{"ctrl+n", "start a new session"},
+	{"ctrl+t", "pin or unpin the session; pinned sessions stay on top"},
+	{"ctrl+x", "stop a running agent; press twice on a session to delete it; remove a finished agent"},
+	{"esc", "back to the current session"},
+	{"?", "show this list"},
 }
 
 var validSessionID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -87,13 +104,109 @@ func (h *homeView) reload(a *App) {
 	} else {
 		sessions[i] = a.session
 	}
+	slices.SortStableFunc(sessions, func(x, y *agent.Session) int {
+		switch {
+		case x.Pinned != y.Pinned && x.Pinned:
+			return -1
+		case x.Pinned != y.Pinned:
+			return 1
+		case x.Pinned:
+			return cmp.Compare(x.PinOrder, y.PinOrder)
+		case x.Order == y.Order:
+			return 0
+		case x.Order == 0:
+			return -1
+		case y.Order == 0:
+			return 1
+		}
+		return cmp.Compare(x.Order, y.Order)
+	})
 	h.sessions = sessions
 }
 
+func (h *homeView) pinned() []*agent.Session {
+	var out []*agent.Session
+	for _, s := range h.sessions {
+		if s.Pinned {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (h *homeView) follow(a *App, s *agent.Session) {
+	h.reload(a)
+	h.cursor = max(slices.IndexFunc(h.items(a), func(x homeItem) bool { return x.isSession() && x.session.ID == s.ID }), 0)
+}
+
+func (h *homeView) query() string {
+	if !h.searching {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(h.search.Value()))
+}
+
+func (h *homeView) togglePin(a *App, s *agent.Session) {
+	order := 0
+	if !s.Pinned {
+		for _, p := range h.pinned() {
+			order = max(order, p.PinOrder)
+		}
+		order++
+	}
+	if err := s.SetPin(config.SessionsDir(), !s.Pinned, order); err != nil {
+		h.err = "Could not save the pin: " + err.Error()
+		return
+	}
+	h.follow(a, s)
+}
+
+func (h *homeView) moveSession(a *App, s *agent.Session, step int) {
+	var group, visible []*agent.Session
+	for _, x := range h.sessions {
+		if x.Pinned == s.Pinned {
+			group = append(group, x)
+		}
+	}
+	for _, item := range h.items(a) {
+		if item.isSession() && item.session.Pinned == s.Pinned {
+			visible = append(visible, item.session)
+		}
+	}
+	vi := slices.Index(visible, s)
+	vj := vi + step
+	if vi < 0 || vj < 0 || len(visible) <= vj {
+		return
+	}
+	i, j := slices.Index(group, s), slices.Index(group, visible[vj])
+	group[i], group[j] = group[j], group[i]
+	dir := config.SessionsDir()
+	for k, x := range group {
+		var err error
+		switch {
+		case s.Pinned && x.PinOrder != k+1:
+			err = x.SetPin(dir, true, k+1)
+		case !s.Pinned && x.Order != k+1:
+			err = x.SetOrder(dir, k+1)
+		}
+		if err != nil {
+			h.err = "Could not save the order: " + err.Error()
+			break
+		}
+	}
+	h.follow(a, s)
+}
+
 func (h *homeView) items(a *App) []homeItem {
+	query := h.query()
 	items := make([]homeItem, 0, len(h.sessions))
 	for _, s := range h.sessions {
-		items = append(items, homeItem{session: s})
+		if query == "" || strings.Contains(strings.ToLower(sessionName(s)), query) {
+			items = append(items, homeItem{session: s})
+		}
+	}
+	if query != "" {
+		return items
 	}
 	for _, t := range a.rt.Tasks.Snapshot() {
 		items = append(items, homeItem{task: t})
@@ -119,25 +232,56 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 	if h.renaming {
 		return h.updateRename(a, msg, selected)
 	}
-	if h.confirmDelete {
-		h.confirmDelete = false
-		if key == "y" {
-			h.delete(a, selected.session)
-		}
+	armed := h.armedDelete
+	h.armedDelete = ""
+	h.err = ""
+	if h.showKeys {
+		h.showKeys = false
 		return nil
 	}
-
-	h.err = ""
 	switch key {
-	case "esc", "q", "ctrl+c":
+	case "esc":
+		if h.searching {
+			h.searching = false
+			if selected.isSession() {
+				h.follow(a, selected.session)
+			}
+			return nil
+		}
 		a.closeOverlay()
-	case "up", "k":
+		return nil
+	case "ctrl+c":
+		a.closeOverlay()
+		return nil
+	case "up":
 		h.cursor = max(h.cursor-1, 0)
-	case "down", "j":
+		return nil
+	case "down":
 		h.cursor = min(h.cursor+1, max(len(items)-1, 0))
-	case "right", "enter", "l":
+		return nil
+	case "right", "enter":
 		return h.open(a, selected)
-	case "r":
+	case "shift+up", "shift+down":
+		if !selected.isSession() {
+			h.err = "Only sessions can be moved."
+			return nil
+		}
+		step := 1
+		if key == "shift+up" {
+			step = -1
+		}
+		h.moveSession(a, selected.session, step)
+		return nil
+	case "ctrl+f":
+		if !h.searching {
+			h.search = textinput.New()
+			h.search.Prompt = "search: "
+			h.search.Placeholder = "session name"
+			h.searching = true
+			return h.search.Focus()
+		}
+		return nil
+	case "ctrl+r":
 		if !selected.isSession() {
 			h.err = "Only sessions can be renamed."
 			return nil
@@ -150,28 +294,67 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		h.nameInput.CursorEnd()
 		h.renaming = true
 		return h.nameInput.Focus()
-	case "ctrl+n", "n":
+	case "ctrl+n":
 		if a.busy {
 			h.err = "A turn is running. Go back and press esc first."
 			return nil
 		}
 		a.closeOverlay()
 		a.newSession()
-	case "d", "delete":
+		return nil
+	case "ctrl+t":
 		if !selected.isSession() {
+			h.err = "Only sessions can be pinned."
 			return nil
 		}
-		if selected.session.ID == a.session.ID && a.busy {
-			h.err = "A turn is running in this session. Go back and press esc first."
-			return nil
-		}
-		h.confirmDelete = true
-	case "x":
-		if !selected.isSession() && selected.task.ID != "" {
-			a.rt.Tasks.Stop(selected.task.ID)
-		}
+		h.togglePin(a, selected.session)
+		return nil
+	case "ctrl+x":
+		h.cut(a, selected, armed)
+		return nil
+	}
+	if h.searching {
+		var cmd tea.Cmd
+		h.search, cmd = h.search.Update(msg)
+		h.cursor = 0
+		return cmd
+	}
+	switch key {
+	case "?":
+		h.showKeys = true
+	case "k":
+		h.cursor = max(h.cursor-1, 0)
+	case "j":
+		h.cursor = min(h.cursor+1, max(len(items)-1, 0))
+	case "l":
+		return h.open(a, selected)
 	}
 	return nil
+}
+
+func (h *homeView) cut(a *App, item homeItem, armed string) {
+	if !item.isSession() {
+		switch {
+		case item.task.ID == "":
+		case item.task.Status == agent.TaskRunning:
+			a.rt.Tasks.Stop(item.task.ID)
+		default:
+			a.rt.Tasks.Remove(item.task.ID)
+			h.cursor = min(h.cursor, max(len(h.items(a))-1, 0))
+		}
+		return
+	}
+	s := item.session
+	if s.ID == a.session.ID && a.busy {
+		h.err = "A turn is running in this session. Go back and press esc first."
+		return
+	}
+	if armed != s.ID {
+		h.armedDelete = s.ID
+		h.err = fmt.Sprintf("Press ctrl+x again to delete %q. Any other key cancels.", sessionName(s))
+		return
+	}
+	h.delete(a, s)
 }
 
 func (h *homeView) updateRename(a *App, msg tea.KeyMsg, selected homeItem) tea.Cmd {
@@ -278,29 +461,66 @@ func (h *homeView) view(a *App) string {
 	if h.task != nil {
 		return stylePanel.Width(width).Render(h.task.taskDetailView(a))
 	}
+	if h.showKeys {
+		lines := []string{styleBold.Render("Session list keys"), ""}
+		for _, k := range homeKeys {
+			lines = append(lines, "  "+styleAccent.Render(fmt.Sprintf("%-14s", k[0]))+k[1])
+		}
+		lines = append(lines, "", styleDim.Render("press any key to go back to the list"))
+		return stylePanel.Width(width).Render(strings.Join(lines, "\n"))
+	}
 	items := h.items(a)
 	h.cursor = min(h.cursor, max(len(items)-1, 0))
-	lines := []string{styleBold.Render("Sessions") + styleDim.Render("  "+a.rt.Cwd), ""}
+	lines := []string{styleBold.Render("Sessions") + styleDim.Render("  "+a.rt.Cwd)}
+	if h.searching {
+		lines = append(lines, h.search.View()+styleDim.Render(fmt.Sprintf("  %d of %d sessions", len(items), len(h.sessions))))
+		if len(items) == 0 {
+			lines = append(lines, styleDim.Render("No session name matches."))
+		}
+	}
+	lines = append(lines, "")
 	start, end := window(len(items), h.cursor, homeRows)
-	agentsHeader := false
+	hasPinned := slices.ContainsFunc(h.sessions, func(s *agent.Session) bool { return s.Pinned })
+	group := func(item homeItem) string {
+		switch {
+		case !item.isSession():
+			return "Agents"
+		case item.session.Pinned:
+			return "Pinned"
+		case hasPinned:
+			return "Recent"
+		}
+		return ""
+	}
+	previous := ""
 	for i := start; i < end; i++ {
 		item := items[i]
-		if !item.isSession() && !agentsHeader {
-			lines = append(lines, "", styleBold.Render("Agents")+styleDim.Render("  sub-agents of this run"), "")
-			agentsHeader = true
+		if g := group(item); g != previous {
+			previous = g
+			if 2 < len(lines) {
+				lines = append(lines, "")
+			}
+			switch g {
+			case "Agents":
+				lines = append(lines, styleBold.Render("Agents")+styleDim.Render("  sub-agents of this run"))
+			case "Pinned":
+				lines = append(lines, styleAccent.Render("Pinned"))
+			case "Recent":
+				lines = append(lines, styleBold.Render("Recent"))
+			}
 		}
 		lines = append(lines, cursorLine(i == h.cursor, clip(h.row(a, item), a.width-8)))
 	}
-	if len(items) == len(h.sessions) {
+	if !h.searching && len(items) == len(h.sessions) {
 		lines = append(lines, "", styleBold.Render("Agents"), styleDim.Render("  No sub-agents in this run."))
 	}
 	switch {
 	case h.renaming:
 		lines = append(lines, "", h.nameInput.View(), styleDim.Render("enter save · esc cancel"))
-	case h.confirmDelete:
-		lines = append(lines, "", styleErr.Render("Delete this session? y to confirm, any other key to cancel"))
+	case h.searching:
+		lines = append(lines, "", styleDim.Render("type to filter · ↑/↓ move · enter open · ctrl keys still work · esc clear search"))
 	default:
-		lines = append(lines, "", styleDim.Render("→/enter open · r rename · n new session · d delete · x stop agent · esc back"))
+		lines = append(lines, "", styleDim.Render("→/enter open · ctrl+f search · ctrl+r rename · ctrl+x stop/delete · esc back · ? help"))
 	}
 	if h.err != "" {
 		lines = append(lines, styleErr.Render(h.err))

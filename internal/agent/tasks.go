@@ -154,6 +154,17 @@ func (r *TaskRegistry) StopAll() {
 	}
 }
 
+func (r *TaskRegistry) Remove(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	i := slices.IndexFunc(r.entries, func(e *taskEntry) bool { return e.ID == id && e.Status != TaskRunning })
+	if i < 0 {
+		return false
+	}
+	r.entries = slices.Delete(r.entries, i, i+1)
+	return true
+}
+
 func (r *TaskRegistry) ClearFinished() {
 	r.mu.Lock()
 	r.entries = slices.DeleteFunc(r.entries, func(e *taskEntry) bool { return e.Status != TaskRunning })

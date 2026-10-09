@@ -377,6 +377,10 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		a.picker.keyInput, cmd = a.picker.keyInput.Update(msg)
 		return cmd
 	}
+	if a.home != nil && a.home.searching {
+		a.home.search, cmd = a.home.search.Update(msg)
+		return cmd
+	}
 	a.input, cmd = a.input.Update(msg)
 	return cmd
 }

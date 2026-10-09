@@ -338,7 +338,7 @@ func TestHomeViewOpensRenamesAndDeletesSessions(t *testing.T) {
 		t.Fatalf("cursor must start on the current session, got %s", cur.ID)
 	}
 	updated := older.Updated
-	typeText(app, "r")
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
 	for range "older work" {
 		app.Update(tea.KeyMsg{Type: tea.KeyBackspace})
 	}
@@ -353,8 +353,8 @@ func TestHomeViewOpensRenamesAndDeletesSessions(t *testing.T) {
 	}
 
 	selectSession(t, app, other.ID)
-	typeText(app, "d")
-	typeText(app, "y")
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
 	if _, err := agent.LoadSession(config.SessionsDir(), other.ID); err == nil {
 		t.Fatal("session not deleted")
 	}
@@ -580,7 +580,7 @@ func TestOpeningASessionRestoresTokensAndContext(t *testing.T) {
 	}
 
 	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	typeText(app, "n")
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
 	if line := strings.Split(app.statusLine(), "\n")[0]; !strings.Contains(line, "| 0 tokens | 100% ctx remaining") {
 		t.Fatalf("a new session must start at zero: %q", line)
 	}

@@ -28,6 +28,9 @@ type Session struct {
 	Usage         llm.Usage `json:"usage"`
 	ContextTokens int       `json:"context_tokens"`
 	TitleSource   string    `json:"title_source,omitempty"`
+	Pinned        bool      `json:"pinned,omitempty"`
+	PinOrder      int       `json:"pin_order,omitempty"`
+	Order         int       `json:"order,omitempty"`
 }
 
 const (
@@ -67,6 +70,22 @@ func (s *Session) Rename(dir, title string) error {
 func (s *Session) SetTitle(dir, title, source string) error {
 	s.Title = strings.TrimSpace(title)
 	s.TitleSource = source
+	if len(s.Messages) == 0 {
+		return nil
+	}
+	return s.write(dir)
+}
+
+func (s *Session) SetOrder(dir string, order int) error {
+	s.Order = order
+	if len(s.Messages) == 0 {
+		return nil
+	}
+	return s.write(dir)
+}
+
+func (s *Session) SetPin(dir string, pinned bool, order int) error {
+	s.Pinned, s.PinOrder = pinned, order
 	if len(s.Messages) == 0 {
 		return nil
 	}

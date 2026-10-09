@@ -106,16 +106,19 @@ Press `←` when the input is empty. The list shows the sessions of this directo
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Select |
+| `shift+↑` / `shift+↓` | Move the session up or down within its group (Pinned or Recent). After a move in Recent, those sessions keep their places; sessions without a place, such as new ones, show at the top. |
 | `→` / `enter` | Open the session, or the agent's live log (`←` goes back) |
-| `r` | Rename the session |
-| `n` / `ctrl+n` | Start a new session |
-| `d` | Delete the session (asks first) |
-| `x` | Stop the agent |
-| `esc` | Back to the current session |
+| `ctrl+f` | Search sessions by name. Type to filter; the other keys keep working; `esc` clears the search. |
+| `ctrl+r` | Rename the session |
+| `ctrl+n` | Start a new session |
+| `ctrl+t` | Pin or unpin the session. Pinned sessions stay on top in their own group. |
+| `ctrl+x` | Stop a running agent. On a session, press it twice in a row to delete the session. On a finished agent, remove it from the list. |
+| `esc` | Back to the current session (or clear the search first) |
+| `?` | Show these keys in the list itself (any key goes back) |
 
 `/resume` opens the same list. `/resume <session id>` opens that session at once; if no session has that id, mga opens the list and says so in red.
 
-mga names each new session for you. After your first message, the current model writes a title of at most 8 words that captures the idea, and the title shows on the input box and in the list. Until the title arrives, or if the model cannot make one, the session uses the start of your first message. A name you set with `r` is never replaced.
+mga names each new session for you. After your first message, the current model writes a title of at most 8 words that captures the idea, and the title shows on the input box and in the list. Until the title arrives, or if the model cannot make one, the session uses the start of your first message. A name you set with `ctrl+r` is never replaced.
 
 ### Slash commands
 
