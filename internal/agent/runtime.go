@@ -199,6 +199,10 @@ func (r *Runtime) agentInfos() []tools.AgentInfo {
 
 func (r *Runtime) MainAgent(env *tools.Env) (*Agent, error) {
 	providerName, model := r.Current()
+	return r.MainAgentWith(env, providerName, model)
+}
+
+func (r *Runtime) MainAgentWith(env *tools.Env, providerName, model string) (*Agent, error) {
 	if model == "" {
 		return nil, fmt.Errorf("no model selected for %s; use /model", providerName)
 	}
@@ -223,14 +227,18 @@ func (r *Runtime) MainAgent(env *tools.Env) (*Agent, error) {
 	}, nil
 }
 
-func (r *Runtime) resolveModel(ref string) (string, string, error) {
+func (r *Runtime) resolveModel(ctx context.Context, ref string) (string, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	provider, model := r.provider, r.model
+	if t := TurnOf(ctx); t.Model != "" {
+		provider, model = t.Provider, t.Model
+	}
 	ref = strings.TrimSpace(ref)
 	if ref == "" || ref == "inherit" {
-		return r.provider, r.model, nil
+		return provider, model, nil
 	}
-	return r.Cfg.ParseModelRef(ref, r.provider)
+	return r.Cfg.ParseModelRef(ref, provider)
 }
 
 func (r *Runtime) Spawn(ctx context.Context, req tools.SpawnRequest) (string, error) {
@@ -246,7 +254,7 @@ func (r *Runtime) Spawn(ctx context.Context, req tools.SpawnRequest) (string, er
 		}
 		return "", fmt.Errorf("unknown agent type %q; available: %s", agentType, strings.Join(names, ", "))
 	}
-	providerName, model, err := r.resolveModel(def.Model)
+	providerName, model, err := r.resolveModel(ctx, def.Model)
 	if err != nil {
 		return "", err
 	}
@@ -271,11 +279,11 @@ func (r *Runtime) Spawn(ctx context.Context, req tools.SpawnRequest) (string, er
 	background := req.Background && r.BackgroundAllowed
 	parent := ctx
 	if background {
-		parent = r.BaseCtx
+		parent = WithTurn(r.BaseCtx, TurnOf(ctx))
 	}
 	runCtx, cancel := context.WithCancel(parent)
 	id := r.Tasks.add(Task{
-		Agent: def.Name, Model: providerName + ":" + model, Description: req.Description,
+		Owner: TurnOf(ctx).Owner, Agent: def.Name, Model: providerName + ":" + model, Description: req.Description,
 		Prompt: req.Prompt, Background: background, NotifyMain: background && !req.Manual,
 	}, cancel)
 

@@ -61,29 +61,13 @@ type App struct {
 	width  int
 	height int
 
-	session *agent.Session
-	history []llm.Message
-	env     *tools.Env
+	*sessionRun
+	runs map[string]*sessionRun
 
 	input        textarea.Model
 	spin         spinner.Model
 	inputHistory []string
 	historyPos   int
-
-	busy          bool
-	cancel        context.CancelFunc
-	turnStart     time.Time
-	stream        strings.Builder
-	reasoning     strings.Builder
-	running       map[string]runningTool
-	runOrder      []string
-	queue         []string
-	notifications []string
-	todos         []tools.Todo
-	usage         llm.Usage
-	contextTokens int
-
-	approvals []*pendingApproval
 
 	view   viewKind
 	picker *modelPicker
@@ -96,6 +80,7 @@ type App struct {
 
 	printQueue    []string
 	printing      bool
+	alt           bool
 	clearScreen   bool
 	replayPending bool
 	notice        string
@@ -122,7 +107,12 @@ func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string, server
 	}
 	_, err := p.Run()
 	rt.Tasks.StopAll()
-	app.saveSession()
+	for _, r := range app.runs {
+		if r.cancel != nil {
+			r.cancel()
+		}
+		app.saveRun(r)
+	}
 	if 0 < len(app.session.Messages) {
 		fmt.Printf("\nResume this session with: mga --resume %s\n", app.session.ID)
 	}
@@ -151,22 +141,19 @@ func newApp(rt *agent.Runtime, session *agent.Session, initialPrompt string, dar
 	sp.Spinner = spinner.Spinner{Frames: []string{"·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"}, FPS: 120 * time.Millisecond}
 	sp.Style = styleAccent
 
-	return &App{
+	a := &App{
 		rt:            rt,
 		send:          func(tea.Msg) {},
 		md:            markdown{dark: dark},
 		width:         100,
 		height:        40,
-		session:       session,
-		history:       slices.Clone(session.Messages),
-		usage:         session.Usage,
-		contextTokens: session.ContextTokens,
-		env:           &tools.Env{Cwd: rt.Cwd},
+		runs:          map[string]*sessionRun{},
 		input:         ta,
 		spin:          sp,
-		running:       map[string]runningTool{},
 		initialPrompt: initialPrompt,
 	}
+	a.sessionRun = a.newRun(session)
+	return a
 }
 
 func (a *App) attach(p *tea.Program) {
@@ -174,12 +161,9 @@ func (a *App) attach(p *tea.Program) {
 	a.rt.Approve = a.approver
 	a.rt.Tasks.OnChange = func() { go p.Send(tasksChangedMsg{}) }
 	a.rt.Tasks.OnFinish = func(t agent.Task) { go p.Send(taskFinishedMsg(t)) }
-	a.wireEnv()
-}
-
-func (a *App) wireEnv() {
-	send := a.send
-	a.env.OnTodos = func(t []tools.Todo) { send(todosMsg(t)) }
+	for _, r := range a.runs {
+		a.wire(r)
+	}
 }
 
 func (a *App) approver(ctx context.Context, req agent.ApprovalRequest) agent.Decision {
@@ -248,13 +232,24 @@ func (a *App) emit(s string) {
 }
 
 func (a *App) flush() tea.Cmd {
-	if a.printing || (len(a.printQueue) == 0 && !a.clearScreen) {
-		return nil
+	var steps []tea.Cmd
+	if wantAlt := a.view == viewHome; wantAlt != a.alt {
+		a.alt = wantAlt
+		if wantAlt {
+			steps = append(steps, tea.EnterAltScreen)
+		} else {
+			steps = append(steps, tea.ExitAltScreen)
+		}
+	}
+	if a.alt || a.printing || (len(a.printQueue) == 0 && !a.clearScreen) {
+		if len(steps) == 0 {
+			return nil
+		}
+		return tea.Sequence(steps...)
 	}
 	text := strings.Join(a.printQueue, "\n")
 	a.printQueue = nil
 	a.printing = true
-	var steps []tea.Cmd
 	if a.clearScreen {
 		a.clearScreen = false
 		text = clearScrollback + text
@@ -293,41 +288,52 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case tea.KeyMsg:
 		return a.handleKey(msg)
 	case deltaMsg:
-		a.stream.WriteString(msg.Text)
-		a.reasoning.WriteString(msg.Reasoning)
+		msg.run.stream.WriteString(msg.delta.Text)
+		msg.run.reasoning.WriteString(msg.delta.Reasoning)
 		return nil
 	case assistantMsg:
-		a.stream.Reset()
-		a.reasoning.Reset()
-		if text := strings.TrimSpace(msg.Content); text != "" {
+		r := msg.run
+		r.stream.Reset()
+		r.reasoning.Reset()
+		r.pending = append(r.pending, msg.message)
+		if text := strings.TrimSpace(msg.message.Content); text != "" && r == a.sessionRun {
 			a.emit(formatAssistant(&a.md, text, a.width))
 		}
 		return nil
 	case toolStartMsg:
-		a.running[msg.call.ID] = runningTool{name: msg.call.Name, summary: msg.summary, args: msg.call.Arguments}
-		a.runOrder = append(a.runOrder, msg.call.ID)
+		msg.run.running[msg.call.ID] = runningTool{name: msg.call.Name, summary: msg.summary, args: msg.call.Arguments}
+		msg.run.runOrder = append(msg.run.runOrder, msg.call.ID)
 		return nil
 	case toolResultMsg:
-		rt, ok := a.running[msg.call.ID]
+		r := msg.run
+		tool, ok := r.running[msg.call.ID]
 		if !ok {
-			rt = runningTool{name: msg.call.Name, summary: tools.OneLine(msg.call.Arguments, 80), args: msg.call.Arguments}
+			tool = runningTool{name: msg.call.Name, summary: tools.OneLine(msg.call.Arguments, 80), args: msg.call.Arguments}
 		}
-		delete(a.running, msg.call.ID)
-		a.runOrder = slices.DeleteFunc(a.runOrder, func(id string) bool { return id == msg.call.ID })
-		a.emit(formatToolBlock(rt.name, rt.summary, rt.args, msg.result, msg.isErr, a.width))
+		delete(r.running, msg.call.ID)
+		r.runOrder = slices.DeleteFunc(r.runOrder, func(id string) bool { return id == msg.call.ID })
+		r.pending = append(r.pending, llm.Message{Role: llm.RoleTool, Content: msg.result, ToolCallID: msg.call.ID, ToolName: msg.call.Name, IsError: msg.isErr})
+		if r == a.sessionRun {
+			a.emit(formatToolBlock(tool.name, tool.summary, tool.args, msg.result, msg.isErr, a.width))
+		}
 		return nil
 	case usageMsg:
-		a.usage.InputTokens += msg.InputTokens
-		a.usage.OutputTokens += msg.OutputTokens
-		a.contextTokens = msg.InputTokens + msg.OutputTokens
+		r := msg.run
+		r.usage.InputTokens += msg.usage.InputTokens
+		r.usage.OutputTokens += msg.usage.OutputTokens
+		r.contextTokens = msg.usage.InputTokens + msg.usage.OutputTokens
 		return nil
 	case todosMsg:
-		a.todos = msg
+		msg.run.todos = msg.todos
 		return nil
 	case turnDoneMsg:
 		return a.finishTurn(msg)
 	case approvalMsg:
-		a.approvals = append(a.approvals, &pendingApproval{req: msg.req, reply: msg.reply, ctx: msg.ctx})
+		r := a.runFor(msg.ctx)
+		r.approvals = append(r.approvals, &pendingApproval{req: msg.req, reply: msg.reply, ctx: msg.ctx})
+		if r != a.sessionRun {
+			a.notice = "Session " + sessionName(r.session) + " needs your input · ← to switch"
+		}
 		return nil
 	case mcpChangedMsg:
 		a.reportMCP()
@@ -387,7 +393,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 
 func (a *App) animating() bool {
 	pickerWaits := a.picker != nil && (a.picker.loading || a.picker.checking)
-	return a.busy || pickerWaits || a.view == viewMCP || 0 < a.rt.Tasks.Running()
+	return a.anyBusy() || pickerWaits || a.view == viewMCP || 0 < a.rt.Tasks.Running()
 }
 
 func (a *App) activeApproval() *pendingApproval {
@@ -400,7 +406,7 @@ func (a *App) activeApproval() *pendingApproval {
 
 func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	a.notice = ""
-	if ap := a.activeApproval(); ap != nil {
+	if ap := a.activeApproval(); ap != nil && a.view != viewHome {
 		return a.approvalKey(ap, msg)
 	}
 	switch a.view {
@@ -556,38 +562,53 @@ func (a *App) submit(text string) tea.Cmd {
 }
 
 func (a *App) startTurn(text, display string) tea.Cmd {
-	if display != "" {
+	return a.startRunTurn(a.sessionRun, text, display)
+}
+
+func (a *App) startRunTurn(r *sessionRun, text, display string) tea.Cmd {
+	current := r == a.sessionRun
+	if display != "" && current {
 		a.emit(display)
 	}
-	ag, err := a.rt.MainAgent(a.env)
+	ag, err := a.rt.MainAgentWith(r.env, r.provider, r.model)
 	if err != nil {
-		a.emit(formatError(err.Error()))
+		if current {
+			a.emit(formatError(err.Error()))
+		} else {
+			a.notice = "Session " + sessionName(r.session) + ": " + err.Error()
+		}
 		return nil
 	}
-	firstRequest := a.needsTitle(text)
-	a.history = append(a.history, llm.Message{Role: llm.RoleUser, Content: text})
-	ctx, cancel := context.WithCancel(a.rt.BaseCtx)
-	a.cancel = cancel
-	a.busy = true
-	a.turnStart = time.Now()
-	history := slices.Clone(a.history)
-	obs := uiObserver{send: a.send}
+	firstRequest := needsTitle(r, text)
+	r.history = append(r.history, llm.Message{Role: llm.RoleUser, Content: text})
+	r.pending = nil
+	turn := agent.Turn{Owner: r.session.ID, Provider: r.provider, Model: r.model}
+	ctx, cancel := context.WithCancel(agent.WithTurn(a.rt.BaseCtx, turn))
+	r.cancel = cancel
+	r.busy = true
+	r.turnStart = time.Now()
+	history := slices.Clone(r.history)
+	obs := uiObserver{send: a.send, run: r}
 	cmds := []tea.Cmd{a.spin.Tick, func() tea.Msg {
 		msgs, err := ag.Run(ctx, history, obs)
 		cancel()
-		return turnDoneMsg{msgs: msgs, err: err}
+		return turnDoneMsg{run: r, msgs: msgs, err: err}
 	}}
 	if firstRequest {
-		cmds = append(cmds, a.titleCmd(a.session.ID, text))
+		cmds = append(cmds, a.titleCmd(r.session.ID, text))
 	}
 	return tea.Batch(cmds...)
 }
 
 func (a *App) needsTitle(text string) bool {
-	if a.session.TitleSource == agent.TitleFromUser || strings.HasPrefix(text, "<task-notification>") {
+	return needsTitle(a.sessionRun, text)
+}
+
+func needsTitle(r *sessionRun, text string) bool {
+	if r.session.TitleSource == agent.TitleFromUser || strings.HasPrefix(text, "<task-notification>") {
 		return false
 	}
-	return !slices.ContainsFunc(a.history, func(m llm.Message) bool { return m.Role == llm.RoleUser })
+	return !slices.ContainsFunc(r.history, func(m llm.Message) bool { return m.Role == llm.RoleUser })
 }
 
 func (a *App) titleCmd(sessionID, request string) tea.Cmd {
@@ -604,6 +625,9 @@ func (a *App) applyTitle(msg titleMsg) {
 	}
 	dir := config.SessionsDir()
 	s := a.session
+	if r, ok := a.runs[msg.sessionID]; ok {
+		s = r.session
+	}
 	if s.ID != msg.sessionID {
 		loaded, err := agent.LoadSession(dir, msg.sessionID)
 		if err != nil {
@@ -626,52 +650,65 @@ func (a *App) interrupt() {
 }
 
 func (a *App) finishTurn(msg turnDoneMsg) tea.Cmd {
-	a.busy = false
-	a.cancel = nil
+	r := msg.run
+	current := r == a.sessionRun
+	r.busy = false
+	r.cancel = nil
 	if 0 < len(msg.msgs) {
-		a.history = msg.msgs
+		r.history = msg.msgs
 	}
-	if partial := strings.TrimSpace(a.stream.String()); partial != "" {
+	r.pending = nil
+	if partial := strings.TrimSpace(r.stream.String()); partial != "" && current {
 		a.emit(styleDim.Render(indent(partial, "⏺ ", "  ")))
 	}
-	a.stream.Reset()
-	a.reasoning.Reset()
-	a.running = map[string]runningTool{}
-	a.runOrder = nil
-	switch {
-	case msg.err == nil, errors.Is(msg.err, agent.ErrDenied):
-	case errors.Is(msg.err, context.Canceled):
-		a.emit(formatError("Interrupted · tell mga what to do instead"))
-	default:
-		a.emit(formatError(msg.err.Error()))
+	r.stream.Reset()
+	r.reasoning.Reset()
+	r.running = map[string]runningTool{}
+	r.runOrder = nil
+	if current {
+		switch {
+		case msg.err == nil, errors.Is(msg.err, agent.ErrDenied):
+		case errors.Is(msg.err, context.Canceled):
+			a.emit(formatError("Interrupted · tell mga what to do instead"))
+		default:
+			a.emit(formatError(msg.err.Error()))
+		}
+	} else if a.view != viewHome {
+		a.notice = "Session " + sessionName(r.session) + " finished · ← to switch"
 	}
-	a.saveSession()
-	return a.nextTurn()
+	a.saveRun(r)
+	return a.nextTurn(r)
 }
 
-func (a *App) nextTurn() tea.Cmd {
-	if a.busy {
+func (a *App) nextTurn(r *sessionRun) tea.Cmd {
+	if r.busy {
 		return nil
 	}
-	if 0 < len(a.queue) {
-		text := strings.Join(a.queue, "\n\n")
-		a.queue = nil
-		return a.startTurn(text, formatUser(text, a.width))
+	if 0 < len(r.queue) {
+		text := strings.Join(r.queue, "\n\n")
+		r.queue = nil
+		return a.startRunTurn(r, text, formatUser(text, a.width))
 	}
-	if 0 < len(a.notifications) {
-		text := strings.Join(a.notifications, "\n\n")
-		a.notifications = nil
-		return a.startTurn(text, formatNote(styleDim.Render("Background agent results sent to the model")))
+	if 0 < len(r.notifications) {
+		text := strings.Join(r.notifications, "\n\n")
+		r.notifications = nil
+		return a.startRunTurn(r, text, formatNote(styleDim.Render("Background agent results sent to the model")))
 	}
 	return nil
 }
 
 func (a *App) taskFinished(t agent.Task) tea.Cmd {
+	r := a.sessionRun
+	if owner, ok := a.runs[t.Owner]; ok {
+		r = owner
+	}
 	status := styleOK.Render(string(t.Status))
 	if t.Status != agent.TaskCompleted {
 		status = styleErr.Render(string(t.Status))
 	}
-	a.emit(formatNote(fmt.Sprintf("Agent %s (%s) %s · %s · %d tool uses", t.Agent, t.ID, status, t.Elapsed(), t.ToolUses)))
+	if r == a.sessionRun {
+		a.emit(formatNote(fmt.Sprintf("Agent %s (%s) %s · %s · %d tool uses", t.Agent, t.ID, status, t.Elapsed(), t.ToolUses)))
+	}
 	if !t.NotifyMain {
 		return nil
 	}
@@ -679,26 +716,33 @@ func (a *App) taskFinished(t agent.Task) tea.Cmd {
 	if t.Err != "" {
 		body = "Error: " + t.Err + "\n" + body
 	}
-	a.notifications = append(a.notifications, fmt.Sprintf(
+	r.notifications = append(r.notifications, fmt.Sprintf(
 		"<task-notification>\nBackground agent %s (id %s, task %q) finished with status %s.\nResult:\n%s\n</task-notification>",
 		t.Agent, t.ID, t.Description, t.Status, body))
-	return a.nextTurn()
+	return a.nextTurn(r)
 }
 
 func (a *App) saveSession() {
-	provider, model := a.rt.Current()
-	a.session.Provider, a.session.Model = provider, model
-	a.session.Cwd = a.rt.Cwd
-	a.session.Messages = a.history
-	a.session.Usage = a.usage
-	a.session.ContextTokens = a.contextTokens
-	if err := a.session.Save(config.SessionsDir()); err != nil {
+	a.saveRun(a.sessionRun)
+}
+
+func (a *App) saveRun(r *sessionRun) {
+	r.session.Provider, r.session.Model = r.provider, r.model
+	r.session.Cwd = a.rt.Cwd
+	r.session.Messages = r.history
+	r.session.Usage = r.usage
+	r.session.ContextTokens = r.contextTokens
+	if err := r.session.Save(config.SessionsDir()); err != nil {
 		a.notice = "could not save session: " + err.Error()
 	}
 }
 
 func (a *App) quit() tea.Cmd {
-	a.interrupt()
+	for _, r := range a.runs {
+		if r.cancel != nil {
+			r.cancel()
+		}
+	}
 	return tea.Quit
 }
 
@@ -743,6 +787,9 @@ func toolSummary(name, args string) string {
 }
 
 func (a *App) View() string {
+	if a.view == viewHome {
+		return a.home.view(a)
+	}
 	var parts []string
 	if live := a.liveView(); live != "" {
 		parts = append(parts, live)
@@ -855,6 +902,13 @@ func (a *App) statusLine() string {
 	}
 	if n := a.rt.Tasks.Running(); 0 < n {
 		parts = append(parts, fmt.Sprintf("%d agent(s) running", n))
+	}
+	working, waiting := a.otherRuns()
+	if 0 < working {
+		parts = append(parts, styleAccent.Render(fmt.Sprintf("%d other session(s) working", working)))
+	}
+	if 0 < waiting {
+		parts = append(parts, styleErr.Render(fmt.Sprintf("%d session(s) need your input", waiting)))
 	}
 	usage := clip("  "+strings.Join(parts, sep), a.width-1)
 

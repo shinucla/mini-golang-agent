@@ -439,7 +439,7 @@ func TestStatusLineShowsModelTokensAndContext(t *testing.T) {
 	app := newTestApp(t)
 	app.rt.SetCurrent("fake", "gpt-5")
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	app.Update(usageMsg{InputTokens: 40000, OutputTokens: 12000})
+	app.Update(usageMsg{run: app.sessionRun, usage: llm.Usage{InputTokens: 40000, OutputTokens: 12000}})
 	app.rt.Perms.SetMode(agent.ModeAuto)
 	lines := strings.Split(app.statusLine(), "\n")
 	if !strings.Contains(lines[0], "gpt-5 (fake) | 52.0k tokens | 87% ctx remaining") {

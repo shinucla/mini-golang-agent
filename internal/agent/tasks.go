@@ -25,6 +25,7 @@ const maxTaskLog = 1000
 
 type Task struct {
 	ID          string
+	Owner       string
 	Agent       string
 	Model       string
 	Description string

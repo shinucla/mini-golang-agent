@@ -2,7 +2,7 @@
 
 This file gives a new maintainer (human or LLM) the full context of the project: the goal, the decisions, the design, the implementation, and the next steps. Read it before you change code. `README.md` is the user guide. This file is the developer guide.
 
-Last update: 2026-10-07.
+Last update: 2026-10-09.
 
 ---
 
@@ -18,7 +18,8 @@ Last update: 2026-10-07.
 - sessions that you can list, open, rename, and delete,
 - five permission modes, including an auto mode with a model-based safety review,
 - a two-line status bar (model, tokens, context left, mode) and the session name on the input box,
-- MCP servers (stdio and Streamable HTTP) whose tools the model can call, configured like Claude Code.
+- MCP servers (stdio and Streamable HTTP) whose tools the model can call, configured like Claude Code,
+- parallel sessions: sessions keep working in the background while the user opens others, with a full-screen session list (Working, Pinned, Recent groups, search, reorder).
 
 The difference from Claude Code: `mga` works with many LLM providers, not one.
 
@@ -59,7 +60,7 @@ grep -rnE '^\s*//' --include='*.go' .   # must print nothing
 | Build, `go vet`, `gofmt` | Clean |
 | Unit tests (`go test -race ./...`) | All pass: llm, tools, agent, agentdef, tui |
 | Built binary in `-p` mode against a fake OpenAI-compatible server | Works: tool call, deny path, allow-rule path, auto mode with an allow review, model list, provider list, agent list, session save |
-| Interactive TUI in a pseudo-terminal | Works: banner, streaming, tool spinner, tool result, slash completion, `/agents`, home view (← → Ctrl+R), key screen, mode cycle and mode saved across restarts, two-line status bar, session name on the input box, Esc, double Ctrl+C exit with status 0 |
+| Interactive TUI in a pseudo-terminal | Works: banner, streaming, tool spinner, tool result, slash completion, `/agents`, home view (← → Ctrl+R), key screen, mode cycle and mode saved across restarts, two-line status bar, session name on the input box, Esc, double Ctrl+C exit with status 0. 2026-10-09: session list keys (ctrl+f search, ctrl+t pin, shift+↑ reorder, ctrl+x delete prompt), and parallel sessions (a slow session under Working on the full screen while a new session answers, then opened with its result) |
 | MCP against a real server (2026-10-07) | Works with the official `@modelcontextprotocol/server-filesystem` (via `npx`): `mga mcp add`, `list` (connected, 14 tools), `get` (read-only flags honored), a `-p` turn where the model called `mcp__fs__read_text_file` and got the file text, and the project-approval flow in the TUI (needs approval → `a` → connected, approval saved). The model was a fake OpenAI-compatible server. |
 | Live calls to real providers | **Only one:** the `/model` key screen sent a fake key to the real OpenAI API and showed the real 401 rejection. No successful chat with a real provider yet. The build machine has no Ollama, no LM Studio, and no API keys. |
 | Build for Linux | A linux/amd64 build with Go 1.24.2 passed vet and tests on the build machine. The owner builds on a Linux machine too; a stale-file problem there is gotcha 15. |
@@ -85,7 +86,7 @@ mini-golang-agent/
 ├── internal/agent/          agent loop, permissions, auto-mode review, runtime (providers + sub-agents), task registry, prompts, sessions
 ├── internal/agentdef/       agent definition files (Markdown + YAML frontmatter), built-in agents
 ├── internal/mcp/            MCP client: config files, JSON-RPC, stdio and HTTP transports, server manager, tool wrapper
-├── internal/tui/            Bubble Tea UI: chat, approvals, status bar, model picker + key screen, agents manager, form, home view
+├── internal/tui/            Bubble Tea UI: parallel session runs, chat, approvals, status bar, model picker + key screen, agents manager, form, home view
 ├── .gitignore               bin/ and .claude/worktrees/
 ├── Makefile                 build, run, dev, test, test-race, vet, fmt, lint, check, tidy, install, uninstall, clean
 ├── README.md                user guide
@@ -277,7 +278,8 @@ Helpers: `Truncate(s, n)` cuts long tool output and notes how much it cut. `OneL
 - Locked config writes for the UI: `SetProviderKey(name, key)` (saves the key and drops the cached client), `SaveDefault(provider, model)`, and `SetMode(mode)` (sets the mode and saves `permission_mode` unless the mode is not `Persistent`). `ProviderConfig(name)` is the locked read. `resolveModel` also reads the config under the lock.
 - Context sizes: `RememberModels(provider, models)` caches the sizes from a model list. `ContextWindow(provider, model)` returns, in order: the provider's `context_window`, the cached size, `llm.KnownContextWindow(model)`, or 0.
 - `Review(ctx, ReviewRequest)` is the auto-mode reviewer (see `review.go`).
-- `MainAgent(env)` builds the main agent for the current model and sets `env.Spawn = r.Spawn`.
+- `MainAgent(env)` builds the main agent for the current model; `MainAgentWith(env, provider, model)` builds it for a given model (the TUI passes each session's own model). Both set `env.Spawn = r.Spawn`.
+- `turn.go`: `WithTurn(ctx, Turn{Owner, Provider, Model})` and `TurnOf(ctx)` carry the owning session and its model through a turn. `resolveModel(ctx, …)` prefers the turn's model for an `inherit` sub-agent, and `Spawn` passes the turn to background sub-agents.
 - `Spawn(ctx, SpawnRequest)`:
   1. finds the definition (default `general-purpose`),
   2. resolves the model: an empty model or `inherit` uses the current one; otherwise `ParseModelRef`,
@@ -286,7 +288,7 @@ Helpers: `Truncate(s, n)` cuts long tool output and notes how much it cut. `OneL
   5. **foreground**: runs under the caller's context and returns the sub-agent's last text as the tool result;
   6. **background** (only when `BackgroundAllowed`): runs under `BaseCtx` (so Esc on the main turn does not stop it) and returns at once with a "started" message. `NotifyMain` is true unless the user started it by hand from the UI (`SpawnRequest.Manual`).
 
-**`tasks.go` — the sub-agent registry.** `TaskRegistry` holds `Task` records: id (`a1`, `a2`, …), agent, model, description, prompt, background flag, `NotifyMain`, status (`running`, `completed`, `failed`, `stopped`), times, a log of up to 1000 lines, result, error, tool count, and tokens.
+**`tasks.go` — the sub-agent registry.** `TaskRegistry` holds `Task` records: id (`a1`, `a2`, …), owner session (`Owner`, from the turn context), agent, model, description, prompt, background flag, `NotifyMain`, status (`running`, `completed`, `failed`, `stopped`), times, a log of up to 1000 lines, result, error, tool count, and tokens.
 
 - `Snapshot()` and `Get()` return copies, so the UI never reads a record under change.
 - `Stop(id)` marks the task and cancels its context. `finish` then records `stopped`.
@@ -313,13 +315,14 @@ Files:
 
 | File | Content |
 |---|---|
-| `app.go` | `App` model, `Run`, `Init`, `Update`, key handling, turn start and finish, background notifications, history recall, `View`, live view, `setMode`, two-line `statusLine` and `statusRow`, approval box |
-| `messages.go` | all `tea.Msg` types and `uiObserver` (agent events → `p.Send`) |
+| `app.go` | `App` model (embeds the current `*sessionRun`, keeps all runs in `runs`), `Run`, `Init`, `Update`, key handling, turn start and finish per run (`startRunTurn`, `finishTurn`, `nextTurn`), background notifications, `saveRun`, alternate-screen switch in `flush`, history recall, `View`, live view, `setMode`, two-line `statusLine` and `statusRow`, approval box |
+| `messages.go` | all `tea.Msg` types and `uiObserver` (agent events → `p.Send`, each tagged with its `*sessionRun`) |
+| `run.go` | `sessionRun` (all live state of one session), `newRun`, `wire`, `waiting`, `transcript`, `runFor` (owner from the turn context), `otherRuns`, `anyBusy` |
 | `commands.go` | slash commands, help, status, `/compact`, `/init` prompt, `setModel` |
 | `picker.go` | `/model` overlay: provider list → key screen (masked input, check, save) → live model list with filter; also `closeOverlay` and `openURL` |
 | `agents.go` | `/agents` and `/tasks` overlay: Library tab and Running tab, detail, delete confirm, run prompt, task log, `$EDITOR` |
 | `form.go` | create/edit form for an agent definition |
-| `home.go` | Home view (← on an empty input, or `/resume`): sessions of this directory plus sub-agents of this run; open (→), rename (ctrl+r), new (ctrl+n), pin (ctrl+t), reorder pinned (shift+↑/↓), search by name (ctrl+f; `homeView.query` filters `items` and hides agents; letters and `?` go into the search field while the ctrl keys and arrows keep working; the first esc clears it), ctrl+x (stops a running agent, removes a finished agent with `TaskRegistry.Remove`, and deletes a session on the second press in a row: `armedDelete` is cleared by any other key), agent log, `?` key panel (`homeKeys`; any key closes it). Session-list actions use ctrl keys so that they keep working while the search field takes letters; `q`, `d`, `x`, `n`, `p`, and `r` are gone (`j`/`k`/`l` stay as navigation outside a search); also `newSession` and `loadSession` |
+| `home.go` | Home view (← on an empty input, or `/resume`): sessions of this directory plus sub-agents of this run; open (→), rename (ctrl+r), new (ctrl+n), pin (ctrl+t), reorder within the Pinned or Recent group (shift+↑/↓), a Working group for running sessions (spinner, elapsed time, blinking needs input), full screen, search by name (ctrl+f; `homeView.query` filters `items` and hides agents; letters and `?` go into the search field while the ctrl keys and arrows keep working; the first esc clears it), ctrl+x (stops a running agent, removes a finished agent with `TaskRegistry.Remove`, and deletes a session on the second press in a row: `armedDelete` is cleared by any other key), agent log, `?` key panel (`homeKeys`; any key closes it). Session-list actions use ctrl keys so that they keep working while the search field takes letters; `q`, `d`, `x`, `n`, `p`, and `r` are gone (`j`/`k`/`l` stay as navigation outside a search); also `newSession` and `loadSession` |
 | `render.go` | styles, glamour Markdown, tool result blocks, diffs, to-dos, clip, list window helper, approval preview, `titledBox` (input box with the session name) |
 
 `App` is a pointer model (`*App` implements `tea.Model`). `Update` always returns the same pointer.
@@ -345,6 +348,8 @@ Behavior details:
 - **Screen on session change.** `newSession` (`/clear`, `n` in the home view, deleting the current session) and `loadSession` (opening a session) call `resetScreen`: it drops queued output and sets `clearScreen`, and the next `flush` sends `tea.ClearScreen` and prints `\x1b[3J` (clear scrollback) in front of the queued text, in one `tea.Sequence`. A new session then shows the start banner. An opened session shows the banner, an "Opened session" note, and `replay`.
 - **Replay.** `replay` prints the last `replayLimit` (200) messages after a "… N earlier messages" note: user lines, assistant Markdown, and each tool result as a full tool block (`formatToolBlock`, with `toolSummary` from the tool call's arguments). `<task-notification>` messages replay as a note. At startup (`-c`, `--resume`) the replay waits for the first `tea.WindowSizeMsg` (`replayPending`), so it uses the real terminal width.
 - **Markdown padding.** Glamour pads lines with spaces wrapped in color codes. `trimStyledSpaces` removes them, so printed lines do not wrap when the terminal gets narrower.
+- **Parallel sessions (2026-10-09).** All live per-session state lives in `sessionRun` (`run.go`): the session, its own provider and model, history, `pending` (assistant and tool messages of the turn in flight, for replay), env, busy, cancel, stream, running tools, queue, notifications, todos, usage, and approvals. `App` embeds `*sessionRun` for the session on screen (so `a.history`, `a.busy`, and so on mean the current session) and keeps every run in memory in `App.runs`, keyed by session id. Switching (`loadSession`, `newSession`) only changes the embedded pointer; nothing stops. Every agent event message carries its run (`uiObserver.run`), and each handler updates that run; output prints only when the run is the current one, and a background run's output comes back through `replay(r.transcript())` when the user opens it. `startRunTurn` puts `agent.Turn{Owner, Provider, Model}` in the turn context: `App.runFor(ctx)` sends an approval to its own run, `Runtime.Spawn` copies the owner and model to sub-agents (background ones too) and records `Task.Owner`, and `taskFinished` notifies the owner run. A background approval waits in its run until the user opens that session; `View` and `handleKey` show approvals only outside the home view. `finishTurn`, `nextTurn`, `compactDone`, and `saveRun` all act on the run in the message, not on the current one. `/model` sets the current run's model; each run's turns use their own model (`MainAgentWith`). The home view lists runs that are not on disk yet, puts working runs first in a **Working** group (`App.working`, `workState`: spinner and elapsed time, or a blinking "⚠ needs input"), and `ctrl+x` on a working session stops it first. The status bar counts other working and waiting runs (`otherRuns`). Quit cancels and saves every run.
+- **Full-screen session list.** `flush` switches the terminal to the alternate screen while `view == viewHome` (`App.alt`) and back afterwards, in the same `tea.Sequence` as any pending prints. `tea.Println` does nothing on the alternate screen, so `flush` keeps queued output until the list closes. The home view renders the panel at the full terminal height.
 - **MCP in the UI.** `tui.Run` takes the `*mcp.Manager`, sets `OnChange` to `go p.Send(mcpChangedMsg{})`, and starts `ConnectAll` in a goroutine, so startup does not wait for servers. `/mcp` opens `mcpView` (`mcpview.go`): the server list, a detail page (target, server name and version, error, stderr tail, instructions, tools), `a` approve, `r` reconnect. `reportMCP` prints one chat note when a server fails or needs approval, and when it connects after one of those; `Init` calls it once, so a project that has only unapproved servers still gets its note. `displayToolName` shows `mcp__s__t` as `s - t (MCP)` in tool blocks and approval boxes. `/status` shows the connected count.
 
 ### 5.7 `internal/mcp`
@@ -378,7 +383,8 @@ Behavior details:
 15. **Moving work between machines.** Use git (`git pull`). A plain file copy keeps files that were deleted on the other side: a leftover `internal/tui/resume.go` once broke the Linux build (duplicate `loadSession`). Never commit `bin/`: a binary built on Linux does not run on macOS, and the reverse.
 16. **MCP callbacks.** `Client.onClosed` and `onToolsChanged` run in their own goroutines, and the manager's `OnChange` goes through `go p.Send`. Never set `onClosed` after the client starts: its reader goroutine reads it. To ignore an old client, take it out of `server.client` first; `fail` then ignores it.
 17. **MCP security.** Never start a project `.mcp.json` server before approval: the file comes from the repository, and its command runs with the user's rights. Approvals are per directory (`approved_mcp_servers` in `~/.mga/config.json`).
-18. **The `--` in `mga mcp add`.** Go's flag parser drops `--` only before the first argument. Here it comes after the server name, so `mcpAdd` removes it by hand; without that, `--` became the command.
+18. **Parallel sessions.** Never write to `a.<field>` from a message handler that carries a run: use the run from the message. Only the current run may `emit`. Keep `run.pending` in step with the agent's own message order for replay, and replace it with the authoritative `msgs` in `finishTurn`. A test of concurrency must deliver messages to `Update` from one goroutine (see the harness in `concurrent_test.go`).
+19. **The `--` in `mga mcp add`.** Go's flag parser drops `--` only before the first argument. Here it comes after the server name, so `mcpAdd` removes it by hand; without that, `--` became the command.
 
 ---
 
@@ -405,6 +411,7 @@ make test         # quick tests
 | `internal/agent/mcp_test.go` | A stub `ToolSource`: the main agent sees and runs the MCP tool, the system prompt has the server instructions, the `mcp__docs` rule allows the call, and a sub-agent gets exactly the tools its definition lists. |
 | `internal/llm/gemini_schema_test.go` | `geminiParameters` drops unsupported keys, maps a nullable type, and leaves out an empty object schema. |
 | `internal/tui/mcp_test.go` | A fake HTTP server plus a broken one plus an unapproved project server: one note each (only once), `/mcp` rows and the detail page, the `/status` line, and the `server - tool (MCP)` display name. |
+| `internal/tui/concurrent_test.go` | A harness runs commands on goroutines and feeds their messages to `Update` from the test goroutine. A gated provider holds session A's turn while session B answers; the list shows A under Working; the status bar counts it; B's approval arrives while C is on screen, waits in B, shows "needs input", and appears when B opens; approving finishes B; releasing A finishes and saves it in the background; opening A replays its result. |
 | `cmd/mga/mcp_test.go` | `mga mcp add` for stdio (with `--` after the name) and http, mode 0600 on the user file, project add approves, invalid name, approve and remove errors. |
 
 Manual end-to-end checks (scripts lived in the job's temporary directory and are not in the repo):
@@ -435,6 +442,7 @@ Manual end-to-end checks (scripts lived in the job's temporary directory and are
 - Windows is not supported.
 - The `color` field of an agent definition is not used in the UI.
 - Background sub-agents stop when mga quits (`Tasks.StopAll`).
+- Sessions run in parallel only while mga is open; quitting cancels and saves every running session. The permission mode and the MCP servers are shared by all sessions.
 - `Read` loads the whole file into memory before it slices lines.
 
 ---
@@ -482,5 +490,5 @@ Keychain storage for keys; auto-compaction near the context limit (the status ba
 3. Follow the rules in section 1.2: no comments, no `>` or `>=`, positive names, STE prose.
 4. For a new provider type, implement `llm.Provider`, add the type in `config` and `llm.New`, and add a fake-server test like the ones in `llm_test.go`.
 5. For a new tool, implement `tools.Tool`, add it to `tools.All`, keep the schema in the safe subset (gotcha 11), decide `ReadOnly` with care (it controls permissions and parallel runs), and add a `toolBody` case in `tui/render.go` if the default preview is not good.
-6. For TUI work, follow gotchas 1 to 8 and 12 to 14. For MCP work, follow gotchas 16 and 17. Add a headless test in `internal/tui/app_test.go`. Check the result in a pseudo-terminal when the layout changes.
+6. For TUI work, follow gotchas 1 to 8 and 12 to 14. For MCP work, follow gotchas 16 and 17. For any change to sessions or turns, follow gotcha 18. Add a headless test in `internal/tui/app_test.go`. Check the result in a pseudo-terminal when the layout changes.
 7. Update this file when you change a design decision, an invariant, or the roadmap.

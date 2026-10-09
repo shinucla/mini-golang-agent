@@ -12,22 +12,37 @@ import (
 )
 
 type (
-	deltaMsg     llm.Delta
-	assistantMsg llm.Message
-	usageMsg     llm.Usage
-	todosMsg     []tools.Todo
 	printDoneMsg struct{}
 
+	deltaMsg struct {
+		run   *sessionRun
+		delta llm.Delta
+	}
+	assistantMsg struct {
+		run     *sessionRun
+		message llm.Message
+	}
+	usageMsg struct {
+		run   *sessionRun
+		usage llm.Usage
+	}
+	todosMsg struct {
+		run   *sessionRun
+		todos []tools.Todo
+	}
 	toolStartMsg struct {
+		run     *sessionRun
 		call    llm.ToolCall
 		summary string
 	}
 	toolResultMsg struct {
+		run    *sessionRun
 		call   llm.ToolCall
 		result string
 		isErr  bool
 	}
 	turnDoneMsg struct {
+		run  *sessionRun
 		msgs []llm.Message
 		err  error
 	}
@@ -57,6 +72,7 @@ type (
 		err       error
 	}
 	compactDoneMsg struct {
+		run     *sessionRun
 		summary string
 		err     error
 	}
@@ -69,16 +85,19 @@ type (
 
 type uiObserver struct {
 	send func(tea.Msg)
+	run  *sessionRun
 }
 
-func (o uiObserver) Delta(d llm.Delta)              { o.send(deltaMsg(d)) }
-func (o uiObserver) AssistantMessage(m llm.Message) { o.send(assistantMsg(m)) }
-func (o uiObserver) Usage(u llm.Usage)              { o.send(usageMsg(u)) }
+func (o uiObserver) Delta(d llm.Delta) { o.send(deltaMsg{run: o.run, delta: d}) }
+
+func (o uiObserver) AssistantMessage(m llm.Message) { o.send(assistantMsg{run: o.run, message: m}) }
+
+func (o uiObserver) Usage(u llm.Usage) { o.send(usageMsg{run: o.run, usage: u}) }
 
 func (o uiObserver) ToolStart(call llm.ToolCall, t tools.Tool) {
-	o.send(toolStartMsg{call: call, summary: t.Summary(json.RawMessage(call.Arguments))})
+	o.send(toolStartMsg{run: o.run, call: call, summary: t.Summary(json.RawMessage(call.Arguments))})
 }
 
 func (o uiObserver) ToolResult(call llm.ToolCall, result string, isErr bool) {
-	o.send(toolResultMsg{call: call, result: result, isErr: isErr})
+	o.send(toolResultMsg{run: o.run, call: call, result: result, isErr: isErr})
 }

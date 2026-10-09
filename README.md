@@ -101,7 +101,9 @@ The status bar under the input box has two lines:
 
 ### Sessions and agents list
 
-Press `←` when the input is empty. The list shows the sessions of this directory (● marks the current one) and the sub-agents of this run.
+Press `←` when the input is empty. The list fills the screen and shows the sessions of this directory (● marks the current one) and the sub-agents of this run.
+
+Sessions run in parallel. Open the list or another session while a session works, and it keeps working in the background. Working sessions show at the top under **Working** with a live indicator; a session that waits for your approval shows **⚠ needs input** and keeps waiting until you open it. The status bar of the session you are in counts the other sessions that work or wait. Quitting mga stops and saves every session.
 
 | Key | Action |
 |---|---|

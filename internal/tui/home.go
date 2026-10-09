@@ -8,14 +8,13 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/kzhuang/mini-golang-agent/internal/agent"
 	"github.com/kzhuang/mini-golang-agent/internal/config"
-	"github.com/kzhuang/mini-golang-agent/internal/llm"
-	"github.com/kzhuang/mini-golang-agent/internal/tools"
 )
 
 const homeRows = 14
@@ -61,9 +60,10 @@ func (a *App) resumeSession(id string) tea.Cmd {
 		return nil
 	}
 	cmd := a.openHome()
-	if a.busy {
-		a.home.err = "A turn is running. Press esc first, then resume."
-		return cmd
+	if r, ok := a.runs[id]; ok {
+		a.closeOverlay()
+		a.loadSession(r.session)
+		return a.learnContextWindow()
 	}
 	if !validSessionID.MatchString(id) {
 		a.home.err = fmt.Sprintf("Session %q does not exist. Pick one from the list.", id)
@@ -98,14 +98,24 @@ func (h *homeView) reload(a *App) {
 	if err != nil {
 		h.err = err.Error()
 	}
-	i := slices.IndexFunc(sessions, func(s *agent.Session) bool { return s.ID == a.session.ID })
-	if i < 0 {
-		sessions = append([]*agent.Session{a.session}, sessions...)
-	} else {
-		sessions[i] = a.session
+	for id, r := range a.runs {
+		i := slices.IndexFunc(sessions, func(s *agent.Session) bool { return s.ID == id })
+		switch {
+		case 0 <= i:
+			sessions[i] = r.session
+		case r == a.sessionRun || r.busy || 0 < len(r.history):
+			sessions = append([]*agent.Session{r.session}, sessions...)
+		}
 	}
 	slices.SortStableFunc(sessions, func(x, y *agent.Session) int {
+		wx, wy := a.working(x), a.working(y)
 		switch {
+		case wx != wy && wx:
+			return -1
+		case wx != wy:
+			return 1
+		case wx:
+			return 0
 		case x.Pinned != y.Pinned && x.Pinned:
 			return -1
 		case x.Pinned != y.Pinned:
@@ -295,10 +305,6 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		h.renaming = true
 		return h.nameInput.Focus()
 	case "ctrl+n":
-		if a.busy {
-			h.err = "A turn is running. Go back and press esc first."
-			return nil
-		}
 		a.closeOverlay()
 		a.newSession()
 		return nil
@@ -345,8 +351,12 @@ func (h *homeView) cut(a *App, item homeItem, armed string) {
 		return
 	}
 	s := item.session
-	if s.ID == a.session.ID && a.busy {
-		h.err = "A turn is running in this session. Go back and press esc first."
+	if r, ok := a.runs[s.ID]; ok && r.busy {
+		if r.cancel != nil {
+			r.cancel()
+		}
+		h.armedDelete = s.ID
+		h.err = fmt.Sprintf("Stopped %q. Press ctrl+x again to delete it.", sessionName(s))
 		return
 	}
 	if armed != s.ID {
@@ -394,10 +404,6 @@ func (h *homeView) open(a *App, item homeItem) tea.Cmd {
 		a.closeOverlay()
 		return nil
 	}
-	if a.busy {
-		h.err = "A turn is running in this session. Go back and press esc first."
-		return nil
-	}
 	a.closeOverlay()
 	a.loadSession(item.session)
 	return a.learnContextWindow()
@@ -411,6 +417,7 @@ func (h *homeView) delete(a *App, s *agent.Session) {
 		h.err = "Could not delete: " + err.Error()
 		return
 	}
+	delete(a.runs, s.ID)
 	if s.ID == a.session.ID {
 		a.newSession()
 	}
@@ -420,30 +427,27 @@ func (h *homeView) delete(a *App, s *agent.Session) {
 }
 
 func (a *App) newSession() {
-	a.session = agent.NewSession(a.rt.Cwd)
-	a.history = nil
-	a.todos = nil
-	a.usage = llm.Usage{}
-	a.contextTokens = 0
-	a.env = &tools.Env{Cwd: a.rt.Cwd}
-	a.wireEnv()
+	s := agent.NewSession(a.rt.Cwd)
+	s.Provider, s.Model = a.provider, a.model
+	a.sessionRun = a.newRun(s)
 	a.resetScreen()
 }
 
 func (a *App) loadSession(s *agent.Session) {
-	a.session = s
-	a.history = slices.Clone(s.Messages)
-	a.todos = nil
-	a.usage = s.Usage
-	a.contextTokens = s.ContextTokens
-	a.env = &tools.Env{Cwd: a.rt.Cwd}
-	a.wireEnv()
-	if s.Provider != "" && s.Model != "" {
-		a.rt.SetCurrent(s.Provider, s.Model)
+	r, ok := a.runs[s.ID]
+	if !ok {
+		r = a.newRun(s)
+	}
+	a.sessionRun = r
+	if r.provider != "" && r.model != "" {
+		a.rt.SetCurrent(r.provider, r.model)
 	}
 	a.resetScreen()
-	a.emit(formatNote("Opened session " + styleBold.Render(sessionName(s)) + styleDim.Render(" · "+s.ID)))
-	a.replay(a.history)
+	a.emit(formatNote("Opened session " + styleBold.Render(sessionName(r.session)) + styleDim.Render(" · "+r.session.ID)))
+	a.replay(r.transcript())
+	if r.busy {
+		a.emit(styleDim.Render("  ⎿  This session is still working…"))
+	}
 }
 
 func sessionName(s *agent.Session) string {
@@ -467,7 +471,7 @@ func (h *homeView) view(a *App) string {
 			lines = append(lines, "  "+styleAccent.Render(fmt.Sprintf("%-14s", k[0]))+k[1])
 		}
 		lines = append(lines, "", styleDim.Render("press any key to go back to the list"))
-		return stylePanel.Width(width).Render(strings.Join(lines, "\n"))
+		return stylePanel.Width(width).Height(max(a.height-2, 10)).Render(strings.Join(lines, "\n"))
 	}
 	items := h.items(a)
 	h.cursor = min(h.cursor, max(len(items)-1, 0))
@@ -479,15 +483,18 @@ func (h *homeView) view(a *App) string {
 		}
 	}
 	lines = append(lines, "")
-	start, end := window(len(items), h.cursor, homeRows)
+	start, end := window(len(items), h.cursor, max(a.height-16, homeRows))
 	hasPinned := slices.ContainsFunc(h.sessions, func(s *agent.Session) bool { return s.Pinned })
+	hasWorking := slices.ContainsFunc(h.sessions, a.working)
 	group := func(item homeItem) string {
 		switch {
 		case !item.isSession():
 			return "Agents"
+		case a.working(item.session):
+			return "Working"
 		case item.session.Pinned:
 			return "Pinned"
-		case hasPinned:
+		case hasPinned || hasWorking:
 			return "Recent"
 		}
 		return ""
@@ -503,6 +510,8 @@ func (h *homeView) view(a *App) string {
 			switch g {
 			case "Agents":
 				lines = append(lines, styleBold.Render("Agents")+styleDim.Render("  sub-agents of this run"))
+			case "Working":
+				lines = append(lines, a.spin.View()+" "+styleAccent.Render("Working")+styleDim.Render("  sessions with a turn in progress"))
 			case "Pinned":
 				lines = append(lines, styleAccent.Render("Pinned"))
 			case "Recent":
@@ -525,7 +534,7 @@ func (h *homeView) view(a *App) string {
 	if h.err != "" {
 		lines = append(lines, styleErr.Render(h.err))
 	}
-	return stylePanel.Width(width).Render(strings.Join(lines, "\n"))
+	return stylePanel.Width(width).Height(max(a.height-2, 10)).Render(strings.Join(lines, "\n"))
 }
 
 func (h *homeView) row(a *App, item homeItem) string {
@@ -546,9 +555,31 @@ func (h *homeView) row(a *App, item homeItem) string {
 	if s.Provider != "" {
 		model = s.Provider + ":" + s.Model
 	}
-	row := marker + fmt.Sprintf("%-40s ", clip(sessionName(s), 40)) + styleDim.Render(fmt.Sprintf("%-16s %4d msgs  %s", updated, len(s.Messages), model))
+	messages := len(s.Messages)
+	if r, ok := a.runs[s.ID]; ok {
+		messages = len(r.history) + len(r.pending)
+	}
+	row := marker + fmt.Sprintf("%-40s ", clip(sessionName(s), 40)) + styleDim.Render(fmt.Sprintf("%-16s %4d msgs  %s", updated, messages, model))
+	if r, ok := a.runs[s.ID]; ok && r.busy {
+		row += "  " + a.workState(r)
+	}
 	if s.ID == a.session.ID {
 		row += styleOK.Render("  current")
 	}
 	return row
+}
+
+func (a *App) working(s *agent.Session) bool {
+	r, ok := a.runs[s.ID]
+	return ok && r.busy
+}
+
+func (a *App) workState(r *sessionRun) string {
+	if r.waiting() {
+		if time.Now().UnixMilli()/500%2 == 0 {
+			return styleErr.Render("⚠ needs input")
+		}
+		return styleAccent.Render("⚠ needs input")
+	}
+	return a.spin.View() + styleAccent.Render(" working ") + styleDim.Render(time.Since(r.turnStart).Round(time.Second).String())
 }

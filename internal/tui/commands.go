@@ -101,10 +101,6 @@ func (a *App) runCommand(text string) tea.Cmd {
 	case "permissions":
 		a.emit(a.permissionsText())
 	case "clear", "new":
-		if a.busy {
-			a.emit(formatError("A turn is running. Press esc first."))
-			return nil
-		}
 		a.newSession()
 	case "compact":
 		return a.compact(arg)
@@ -187,6 +183,7 @@ func (a *App) setModel(provider, model string) {
 		return
 	}
 	a.rt.SetCurrent(provider, model)
+	a.provider, a.model = provider, model
 	note := "Set model to " + styleBold.Render(provider+":"+model)
 	if err := a.rt.SaveDefault(provider, model); err != nil {
 		note += styleErr.Render(" (not saved: " + err.Error() + ")")
@@ -203,7 +200,8 @@ func (a *App) compact(focus string) tea.Cmd {
 		a.emit(styleDim.Render("  ⎿  Nothing to compact"))
 		return nil
 	}
-	providerName, model := a.rt.Current()
+	r := a.sessionRun
+	providerName, model := r.provider, r.model
 	p, err := a.rt.Provider(providerName)
 	if err != nil {
 		a.emit(formatError(err.Error()))
@@ -226,27 +224,33 @@ func (a *App) compact(focus string) tea.Cmd {
 			Messages: []llm.Message{{Role: llm.RoleUser, Content: prompt}},
 		}, func(llm.Delta) {})
 		if err != nil {
-			return compactDoneMsg{err: err}
+			return compactDoneMsg{run: r, err: err}
 		}
-		return compactDoneMsg{summary: resp.Message.Content}
+		return compactDoneMsg{run: r, summary: resp.Message.Content}
 	})
 }
 
 func (a *App) compactDone(msg compactDoneMsg) tea.Cmd {
-	a.busy = false
-	a.cancel = nil
+	r := msg.run
+	r.busy = false
+	r.cancel = nil
+	current := r == a.sessionRun
 	if msg.err != nil {
-		a.emit(formatError("compact failed: " + msg.err.Error()))
-		return a.nextTurn()
+		if current {
+			a.emit(formatError("compact failed: " + msg.err.Error()))
+		}
+		return a.nextTurn(r)
 	}
-	a.history = []llm.Message{
+	r.history = []llm.Message{
 		{Role: llm.RoleUser, Content: "This session continues from an earlier conversation. Summary of the earlier conversation:\n\n" + msg.summary},
 		{Role: llm.RoleAssistant, Content: "I have the summary and can continue from here."},
 	}
-	a.contextTokens = 0
-	a.saveSession()
-	a.emit(styleDim.Render("  ⎿  Compacted the conversation"))
-	return a.nextTurn()
+	r.contextTokens = 0
+	a.saveRun(r)
+	if current {
+		a.emit(styleDim.Render("  ⎿  Compacted the conversation"))
+	}
+	return a.nextTurn(r)
 }
 
 func transcript(msgs []llm.Message) string {
