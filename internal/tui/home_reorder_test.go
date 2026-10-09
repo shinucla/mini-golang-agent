@@ -13,7 +13,7 @@ import (
 
 func pinnedOrder(app *App) string {
 	var names []string
-	for _, s := range app.home.pinned() {
+	for _, s := range app.home.pinned(app) {
 		names = append(names, sessionName(s))
 	}
 	return strings.Join(names, ",")

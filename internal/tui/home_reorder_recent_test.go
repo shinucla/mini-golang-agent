@@ -13,7 +13,7 @@ import (
 
 func recentOrder(app *App) string {
 	var names []string
-	for _, s := range app.home.sessions {
+	for _, s := range app.home.ordered(app) {
 		if !s.Pinned {
 			names = append(names, sessionName(s))
 		}

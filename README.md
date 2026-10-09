@@ -103,7 +103,7 @@ The status bar under the input box has two lines:
 
 Press `←` when the input is empty. The list fills the screen and shows the sessions of this directory (● marks the current one) and the sub-agents of this run.
 
-Sessions run in parallel. Open the list or another session while a session works, and it keeps working in the background. Working sessions show at the top under **Working** with a live indicator; a session that waits for your approval shows **⚠ needs input** and keeps waiting until you open it. The status bar of the session you are in counts the other sessions that work or wait. Quitting mga stops and saves every session.
+Sessions run in parallel. Open the list or another session while a session works, and it keeps working in the background. The list shows three groups in this order: **Pinned**, **Working**, and **Recent**. A session that works shows under **Working** with a live indicator, and goes back to its own group and place when it finishes; a session that waits for your approval shows **⚠ needs input** and keeps waiting until you open it. The status bar of the session you are in counts the other sessions that work or wait. Quitting mga stops and saves every session.
 
 | Key | Action |
 |---|---|

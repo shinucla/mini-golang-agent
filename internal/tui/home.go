@@ -107,22 +107,29 @@ func (h *homeView) reload(a *App) {
 			sessions = append([]*agent.Session{r.session}, sessions...)
 		}
 	}
-	slices.SortStableFunc(sessions, func(x, y *agent.Session) int {
-		wx, wy := a.working(x), a.working(y)
+	h.sessions = sessions
+}
+
+func (a *App) rank(s *agent.Session) int {
+	switch {
+	case a.working(s):
+		return 1
+	case s.Pinned:
+		return 0
+	}
+	return 2
+}
+
+func (h *homeView) ordered(a *App) []*agent.Session {
+	out := slices.Clone(h.sessions)
+	slices.SortStableFunc(out, func(x, y *agent.Session) int {
+		rx, ry := a.rank(x), a.rank(y)
 		switch {
-		case wx != wy && wx:
-			return -1
-		case wx != wy:
-			return 1
-		case wx:
-			return 0
-		case x.Pinned != y.Pinned && x.Pinned:
-			return -1
-		case x.Pinned != y.Pinned:
-			return 1
-		case x.Pinned:
+		case rx != ry:
+			return cmp.Compare(rx, ry)
+		case rx == 0:
 			return cmp.Compare(x.PinOrder, y.PinOrder)
-		case x.Order == y.Order:
+		case rx == 1, x.Order == y.Order:
 			return 0
 		case x.Order == 0:
 			return -1
@@ -131,12 +138,12 @@ func (h *homeView) reload(a *App) {
 		}
 		return cmp.Compare(x.Order, y.Order)
 	})
-	h.sessions = sessions
+	return out
 }
 
-func (h *homeView) pinned() []*agent.Session {
+func (h *homeView) pinned(a *App) []*agent.Session {
 	var out []*agent.Session
-	for _, s := range h.sessions {
+	for _, s := range h.ordered(a) {
 		if s.Pinned {
 			out = append(out, s)
 		}
@@ -159,7 +166,7 @@ func (h *homeView) query() string {
 func (h *homeView) togglePin(a *App, s *agent.Session) {
 	order := 0
 	if !s.Pinned {
-		for _, p := range h.pinned() {
+		for _, p := range h.pinned(a) {
 			order = max(order, p.PinOrder)
 		}
 		order++
@@ -172,14 +179,19 @@ func (h *homeView) togglePin(a *App, s *agent.Session) {
 }
 
 func (h *homeView) moveSession(a *App, s *agent.Session, step int) {
+	if a.working(s) {
+		h.err = "A working session goes back to its group when it finishes; move it then."
+		return
+	}
+	same := func(x *agent.Session) bool { return !a.working(x) && x.Pinned == s.Pinned }
 	var group, visible []*agent.Session
-	for _, x := range h.sessions {
-		if x.Pinned == s.Pinned {
+	for _, x := range h.ordered(a) {
+		if same(x) {
 			group = append(group, x)
 		}
 	}
 	for _, item := range h.items(a) {
-		if item.isSession() && item.session.Pinned == s.Pinned {
+		if item.isSession() && same(item.session) {
 			visible = append(visible, item.session)
 		}
 	}
@@ -210,7 +222,7 @@ func (h *homeView) moveSession(a *App, s *agent.Session, step int) {
 func (h *homeView) items(a *App) []homeItem {
 	query := h.query()
 	items := make([]homeItem, 0, len(h.sessions))
-	for _, s := range h.sessions {
+	for _, s := range h.ordered(a) {
 		if query == "" || strings.Contains(strings.ToLower(sessionName(s)), query) {
 			items = append(items, homeItem{session: s})
 		}
@@ -484,17 +496,16 @@ func (h *homeView) view(a *App) string {
 	}
 	lines = append(lines, "")
 	start, end := window(len(items), h.cursor, max(a.height-16, homeRows))
-	hasPinned := slices.ContainsFunc(h.sessions, func(s *agent.Session) bool { return s.Pinned })
-	hasWorking := slices.ContainsFunc(h.sessions, a.working)
+	grouped := slices.ContainsFunc(h.sessions, func(s *agent.Session) bool { return a.rank(s) != 2 })
 	group := func(item homeItem) string {
 		switch {
 		case !item.isSession():
 			return "Agents"
-		case a.working(item.session):
-			return "Working"
-		case item.session.Pinned:
+		case a.rank(item.session) == 0:
 			return "Pinned"
-		case hasPinned || hasWorking:
+		case a.rank(item.session) == 1:
+			return "Working"
+		case grouped:
 			return "Recent"
 		}
 		return ""

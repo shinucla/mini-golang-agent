@@ -14,7 +14,7 @@ import (
 
 func listOrder(app *App) []string {
 	var titles []string
-	for _, s := range app.home.sessions {
+	for _, s := range app.home.ordered(app) {
 		titles = append(titles, sessionName(s))
 	}
 	return titles
