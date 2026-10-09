@@ -52,7 +52,6 @@ var homeKeys = [][2]string{
 	{"type + enter", "start a new session with that message; it works in the background"},
 	{"ctrl+f", "search sessions by name; esc clears the search"},
 	{"ctrl+r", "rename the session"},
-	{"ctrl+n", "start a new session"},
 	{"ctrl+t", "pin or unpin the session; pinned sessions stay on top"},
 	{"ctrl+x", "stop a running agent; press twice on a session to delete it; remove a finished agent"},
 	{"esc", "close this help, clear the search or the input, or go back"},
@@ -110,9 +109,12 @@ func (h *homeView) reload(a *App) {
 		switch {
 		case 0 <= i:
 			sessions[i] = r.session
-		case r == a.sessionRun || r.busy || 0 < len(r.history):
+		case !r.empty():
 			sessions = append([]*agent.Session{r.session}, sessions...)
 		}
+	}
+	if len(sessions) == 0 {
+		sessions = []*agent.Session{a.session}
 	}
 	h.sessions = sessions
 }
@@ -343,10 +345,6 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		h.nameInput.CursorEnd()
 		h.renaming = true
 		return h.nameInput.Focus()
-	case "ctrl+n":
-		a.closeOverlay()
-		a.newSession()
-		return nil
 	case "ctrl+t":
 		if !selected.isSession() {
 			h.err = "Only sessions can be pinned."

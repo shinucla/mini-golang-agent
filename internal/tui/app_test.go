@@ -320,8 +320,14 @@ func TestHomeViewOpensRenamesAndDeletesSessions(t *testing.T) {
 
 	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	view := app.View()
-	if app.view != viewHome || !strings.Contains(view, "(new session)") || !strings.Contains(view, "older work") || !strings.Contains(view, "scratch") {
+	if app.view != viewHome || !strings.Contains(view, "older work") || !strings.Contains(view, "scratch") {
 		t.Fatalf("home view:\n%s", view)
+	}
+	if strings.Contains(view, "(new session)") || strings.Contains(view, "current") || strings.Contains(ansi.Strip(view), "● ") {
+		t.Fatalf("an unused placeholder must stay hidden when sessions exist:\n%s", view)
+	}
+	if first := app.home.items(app)[app.home.cursor]; app.home.cursor != 0 || first.session.ID != other.ID {
+		t.Fatal("the cursor must start on the first session")
 	}
 	if strings.Contains(view, "other directory") {
 		t.Fatal("sessions of another directory must not show")
@@ -580,7 +586,8 @@ func TestOpeningASessionRestoresTokensAndContext(t *testing.T) {
 	}
 
 	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	app.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	typeText(app, "/new")
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if line := strings.Split(app.statusLine(), "\n")[0]; !strings.Contains(line, "| 0 tokens | 100% ctx remaining") {
 		t.Fatalf("a new session must start at zero: %q", line)
 	}

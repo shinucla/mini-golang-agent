@@ -29,19 +29,19 @@ func TestReorderRecentSessions(t *testing.T) {
 	saveTestSession(t, app.rt.Cwd, "newest", "3")
 
 	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	if got := recentOrder(app); got != "(new session),newest,middle,oldest" {
+	if got := recentOrder(app); got != "newest,middle,oldest" {
 		t.Fatalf("start order = %s", got)
 	}
 	selectSession(t, app, oldest.ID)
 	app.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
-	if got := recentOrder(app); got != "(new session),newest,oldest,middle" {
+	if got := recentOrder(app); got != "newest,oldest,middle" {
 		t.Fatalf("after shift+up = %s", got)
 	}
 	if app.home.items(app)[app.home.cursor].session.ID != oldest.ID {
 		t.Fatal("the cursor must follow the moved session")
 	}
-	if s, _ := agent.LoadSession(config.SessionsDir(), middle.ID); s.Order != 4 {
-		t.Fatalf("saved order of middle = %d, want 4", s.Order)
+	if s, _ := agent.LoadSession(config.SessionsDir(), middle.ID); s.Order != 3 {
+		t.Fatalf("saved order of middle = %d, want 3", s.Order)
 	}
 
 	middle, _ = agent.LoadSession(config.SessionsDir(), middle.ID)
@@ -52,7 +52,7 @@ func TestReorderRecentSessions(t *testing.T) {
 	saveTestSession(t, app.rt.Cwd, "brand new", "4")
 	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	if got := recentOrder(app); got != "brand new,(new session),newest,oldest,middle" {
+	if got := recentOrder(app); got != "brand new,newest,oldest,middle" {
 		t.Fatalf("a used session keeps its place and a new one goes on top: %s", got)
 	}
 
@@ -62,7 +62,7 @@ func TestReorderRecentSessions(t *testing.T) {
 		t.Fatal("pinned sessions leave the Recent group")
 	}
 	app.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
-	if got := recentOrder(app); got != "brand new,(new session),newest,oldest,middle" {
+	if got := recentOrder(app); got != "brand new,newest,oldest,middle" {
 		t.Fatalf("unpin must restore the old place: %s", got)
 	}
 
@@ -71,7 +71,7 @@ func TestReorderRecentSessions(t *testing.T) {
 	selectSession(t, app, middle.ID)
 	app.Update(tea.KeyMsg{Type: tea.KeyShiftUp})
 	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if got := recentOrder(app); got != "brand new,(new session),newest,middle,oldest" {
+	if got := recentOrder(app); got != "brand new,newest,middle,oldest" {
 		t.Fatalf("a move during a search swaps with the visible neighbor: %s", got)
 	}
 }

@@ -59,3 +59,42 @@ func TestSlashCommandsFromTheSessionList(t *testing.T) {
 		t.Fatalf("plain text still starts a new session: view=%v title=%q", app.view, app.session.Title)
 	}
 }
+
+func TestCtrlNIsGoneFromTheSessionList(t *testing.T) {
+	app := newTestApp(t)
+	before := app.sessionRun
+	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	if app.view != viewHome || app.sessionRun != before || len(app.runs) != 1 {
+		t.Fatal("ctrl+n must no longer start a session from the list")
+	}
+	typeText(app, "?")
+	if strings.Contains(ansi.Strip(app.View()), "ctrl+n") {
+		t.Fatal("the help must not list ctrl+n")
+	}
+}
+
+func TestPlaceholderShowsOnlyWithoutSessions(t *testing.T) {
+	app := newTestApp(t)
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	view := ansi.Strip(app.View())
+	if !strings.Contains(view, "● (new session)") || !strings.Contains(view, "current") {
+		t.Fatalf("with no sessions, the placeholder shows as current:\n%s", view)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	opened := saveTestSession(t, app.rt.Cwd, "real work", "q")
+	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if view := ansi.Strip(app.View()); strings.Contains(view, "(new session)") || strings.Contains(view, "current") {
+		t.Fatalf("with sessions, the unused placeholder hides:\n%s", view)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	if view := ansi.Strip(app.View()); !strings.Contains(view, "● real work") || !strings.Contains(view, "current") {
+		t.Fatalf("an opened session shows as current after coming back:\n%s", view)
+	}
+	if app.session.ID != opened.ID {
+		t.Fatal("enter must have opened the first session")
+	}
+}

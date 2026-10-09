@@ -143,7 +143,7 @@ func TestSessionsKeepWorkingInTheBackground(t *testing.T) {
 		t.Fatalf("A must show under Working:\n%s", view)
 	}
 
-	h.key(tea.KeyCtrlN)
+	h.send("/new")
 	b := h.app.sessionRun
 	if b == a || !a.busy {
 		t.Fatal("a new session must not stop A")
@@ -159,7 +159,7 @@ func TestSessionsKeepWorkingInTheBackground(t *testing.T) {
 
 	h.send("this needs bash")
 	h.key(tea.KeyLeft)
-	h.key(tea.KeyCtrlN)
+	h.send("/new")
 	c := h.app.sessionRun
 	h.until("B's approval request", func() bool { return b.waiting() })
 	if strings.Contains(h.view(), "Do you want to proceed?") {

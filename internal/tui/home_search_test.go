@@ -35,7 +35,7 @@ func TestSessionSearchDeleteAndKeys(t *testing.T) {
 	app.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
 	typeText(app, "AGENT")
 	names := listNames(app)
-	if strings.Join(names, ",") != "Agent docs,Refactor the agent loop" || !strings.Contains(ansi.Strip(app.View()), "2 of 4 sessions") {
+	if strings.Join(names, ",") != "Agent docs,Refactor the agent loop" || !strings.Contains(ansi.Strip(app.View()), "2 of 3 sessions") {
 		t.Fatalf("search results = %v\n%s", names, ansi.Strip(app.View()))
 	}
 	typeText(app, "?jkl")
@@ -56,7 +56,7 @@ func TestSessionSearchDeleteAndKeys(t *testing.T) {
 	}
 
 	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if app.view != viewHome || app.home.searching || len(listNames(app)) != 4 {
+	if app.view != viewHome || app.home.searching || len(listNames(app)) != 3 {
 		t.Fatal("the first esc clears the search only")
 	}
 	if app.home.items(app)[app.home.cursor].session.ID != target.ID {

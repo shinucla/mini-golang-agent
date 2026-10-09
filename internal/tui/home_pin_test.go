@@ -35,7 +35,7 @@ func TestPinSessions(t *testing.T) {
 	selectSession(t, app, oldest.ID)
 	app.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 
-	if got := strings.Join(listOrder(app)[:2], ","); got != "oldest work,(new session)" {
+	if got := strings.Join(listOrder(app)[:2], ","); got != "oldest work,newest work" {
 		t.Fatalf("order after pin = %v", listOrder(app))
 	}
 	if app.home.items(app)[app.home.cursor].session.ID != oldest.ID {

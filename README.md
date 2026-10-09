@@ -101,7 +101,7 @@ The status bar under the input box has two lines:
 
 ### Sessions and agents list
 
-Press `←` when the input is empty. The list fills the screen and shows the sessions of this directory (● marks the current one) and the sub-agents of this run. The input box and the hint line stay at the bottom of the screen; `?` (with an empty input box) shows the full help in place of the hint line. Type a message and press `enter` to start a new session with it: the new session becomes the current one (●), works in the background under **Working**, and you stay in the list. An empty "(new session)" placeholder disappears. Slash commands work in this box too: typing `/` shows the matching commands at the bottom, `tab` completes, and `enter` closes the list and runs the command as in the chat (plain `/resume` stays in the list).
+Press `←` when the input is empty. The list fills the screen and shows the sessions of this directory (● marks the current one, the session you opened last) and the sub-agents of this run. An unused new session shows as "(new session)" only when the directory has no other sessions; otherwise it stays hidden and the cursor starts on the first session. The input box and the hint line stay at the bottom of the screen; `?` (with an empty input box) shows the full help in place of the hint line. Type a message and press `enter` to start a new session with it: the new session becomes the current one (●), works in the background under **Working**, and you stay in the list. An empty "(new session)" placeholder disappears. Slash commands work in this box too: typing `/` shows the matching commands at the bottom, `tab` completes, and `enter` closes the list and runs the command as in the chat (plain `/resume` stays in the list).
 
 Sessions run in parallel. Open the list or another session while a session works, and it keeps working in the background. The list shows three groups in this order: **Pinned**, **Working**, and **Recent**. A session that works shows under **Working** with a live indicator, and goes back to its own group and place when it finishes; a session that waits for your approval shows **⚠ needs input** and keeps waiting until you open it. The status bar of the session you are in counts the other sessions that work or wait. Quitting mga stops and saves every session.
 
@@ -113,7 +113,6 @@ Sessions run in parallel. Open the list or another session while a session works
 | `→` / `enter` | Open the session, or the agent's live log (`←` goes back) |
 | `ctrl+f` | Search sessions by name. Type to filter; the other keys keep working; `esc` clears the search. |
 | `ctrl+r` | Rename the session |
-| `ctrl+n` | Start a new session |
 | `ctrl+t` | Pin or unpin the session. Pinned sessions stay on top in their own group. |
 | `ctrl+x` | Stop a running agent. On a session, press it twice in a row to delete the session. On a finished agent, remove it from the list. |
 | `esc` | Close the help, clear the search or the input box, or go back to the current session |
