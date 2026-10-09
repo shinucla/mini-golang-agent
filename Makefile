@@ -8,39 +8,42 @@ INSTALL_PATH := $(INSTALL_DIR)/$(BINARY)
 
 .DEFAULT_GOAL := build
 
-.PHONY: help build run dev test test-race vet fmt lint check tidy install uninstall clean
+.PHONY: help go-check build run dev test test-race vet fmt lint check tidy install uninstall clean
 
 help: ## Show the targets
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
-build: ## Build bin/mga
+go-check:
+	@sh scripts/check-go.sh
+
+build: go-check ## Build bin/mga
 	go build -o $(BIN_DIR)/$(BINARY) $(PKG)
 
 run: build ## Build and run mga; pass flags with ARGS="--model ollama:qwen3"
 	./$(BIN_DIR)/$(BINARY) $(ARGS)
 
-dev: ## Run from source without a build step; pass flags with ARGS
+dev: go-check ## Run from source without a build step; pass flags with ARGS
 	go run $(PKG) $(ARGS)
 
-test: ## Run the tests
+test: go-check ## Run the tests
 	go test ./...
 
-test-race: ## Run the tests with the race detector
+test-race: go-check ## Run the tests with the race detector
 	go test -race -count=1 ./...
 
-vet: ## Run go vet
+vet: go-check ## Run go vet
 	go vet ./...
 
 fmt: ## Format the code
 	gofmt -w .
 
-lint: ## Fail when a file is not formatted or vet reports a problem
+lint: go-check ## Fail when a file is not formatted or vet reports a problem
 	@test -z "$$(gofmt -l .)" || (echo "Files need gofmt:"; gofmt -l .; exit 1)
 	go vet ./...
 
 check: lint test-race ## Run lint and the race tests
 
-tidy: ## Tidy go.mod and go.sum
+tidy: go-check ## Tidy go.mod and go.sum
 	go mod tidy
 
 install: test ## Test, build, and install mga to ~/.local/bin (no sudo); change it with PREFIX=... or INSTALL_DIR=...

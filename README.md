@@ -24,7 +24,7 @@ make uninstall                            # remove it (keeps ~/.mga)
 make help                                 # all targets
 ```
 
-Go 1.24.2 or later is necessary. With an older Go, the `go` command downloads Go 1.24.2 when `GOTOOLCHAIN=auto` (the default). The tool supports macOS and Linux. Bash uses Unix process groups, so Windows is not supported.
+Go 1.24.2 or later is necessary. Go 1.21 to 1.24.1 download Go 1.24.2 by themselves when `GOTOOLCHAIN=auto` (the default). Go 1.20 and older cannot do this; package managers such as apt often install one of them (Ubuntu 20.04 has Go 1.13), so install Go from https://go.dev/dl/. Every `make` target that uses Go first runs `scripts/check-go.sh`: it stops with install steps when Go is missing or too old, and it warns when `go.mod` or `go.sum` has local changes (an old Go can change them; `git checkout -- go.mod go.sum` restores them). The tool supports macOS and Linux. Bash uses Unix process groups, so Windows is not supported.
 
 ## Providers and models
 
