@@ -93,13 +93,10 @@ func clip(s string, width int) string {
 }
 
 func formatUser(text string, width int) string {
-	body := strings.Split(indent(ansi.Wrap(text, max(width-4, 10), ""), "> ", "  "), "\n")
-	block := 0
-	for _, l := range body {
-		block = max(block, ansi.StringWidth(l))
-	}
+	band := max(width-1, 12)
+	body := strings.Split(indent(ansi.Wrap(text, band-3, ""), "> ", "  "), "\n")
 	for i, l := range body {
-		body[i] = styleUser.Render(l + strings.Repeat(" ", block+1-ansi.StringWidth(l)))
+		body[i] = styleUser.Render(l + strings.Repeat(" ", max(band-ansi.StringWidth(l), 1)))
 	}
 	return "\n" + strings.Join(body, "\n")
 }

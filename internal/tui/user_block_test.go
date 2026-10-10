@@ -19,8 +19,11 @@ func TestUserMessageIsAShadedBlock(t *testing.T) {
 		t.Fatalf("lines = %q", lines)
 	}
 	first, second := ansi.Strip(lines[0]), ansi.Strip(lines[1])
-	if first != "> fix the login bug  " || second != "  then run the tests " {
-		t.Fatalf("the block is as wide as the longest line plus one space: %q %q", first, second)
+	if ansi.StringWidth(first) != 79 || ansi.StringWidth(second) != 79 {
+		t.Fatalf("the block covers the whole line but the last column: %d %d", ansi.StringWidth(first), ansi.StringWidth(second))
+	}
+	if strings.TrimRight(first, " ") != "> fix the login bug" || strings.TrimRight(second, " ") != "  then run the tests" {
+		t.Fatalf("lines = %q %q", first, second)
 	}
 
 	long := formatUser(strings.Repeat("word ", 40), 40)

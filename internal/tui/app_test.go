@@ -641,7 +641,7 @@ func TestNewSessionClearsAndOpenedSessionReplays(t *testing.T) {
 	}
 	for _, l := range strings.Split(strings.Join(app.printQueue, "\n"), "\n") {
 		plain := ansi.Strip(l)
-		if strings.HasSuffix(plain, " ") && (!strings.HasPrefix(plain, "> ") || strings.HasSuffix(plain, "  ")) {
+		if strings.HasSuffix(plain, " ") && !strings.HasPrefix(plain, "> ") {
 			t.Fatalf("rendered line keeps trailing padding: %q", l)
 		}
 	}
