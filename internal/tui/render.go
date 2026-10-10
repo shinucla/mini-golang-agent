@@ -33,6 +33,9 @@ var (
 	styleDone     = lipgloss.NewStyle().Foreground(colorDim).Strikethrough(true)
 	styleBox      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorDim).Padding(0, 1)
 	stylePanel    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorAccent).Padding(0, 1)
+	styleUser     = lipgloss.NewStyle().
+			Background(lipgloss.AdaptiveColor{Light: "254", Dark: "237"}).
+			Foreground(lipgloss.AdaptiveColor{Light: "235", Dark: "252"})
 )
 
 const toolPreviewLines = 6
@@ -90,11 +93,15 @@ func clip(s string, width int) string {
 }
 
 func formatUser(text string, width int) string {
-	var lines []string
-	for _, l := range strings.Split(text, "\n") {
-		lines = append(lines, clip(l, width-2))
+	body := strings.Split(indent(ansi.Wrap(text, max(width-4, 10), ""), "> ", "  "), "\n")
+	block := 0
+	for _, l := range body {
+		block = max(block, ansi.StringWidth(l))
 	}
-	return "\n" + styleDim.Render(indent(strings.Join(lines, "\n"), "> ", "  "))
+	for i, l := range body {
+		body[i] = styleUser.Render(l + strings.Repeat(" ", block+1-ansi.StringWidth(l)))
+	}
+	return "\n" + strings.Join(body, "\n")
 }
 
 func formatAssistant(md *markdown, text string, width int) string {

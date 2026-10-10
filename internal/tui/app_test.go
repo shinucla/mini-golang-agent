@@ -640,7 +640,8 @@ func TestNewSessionClearsAndOpenedSessionReplays(t *testing.T) {
 		t.Fatal("notifications must not replay as raw user text")
 	}
 	for _, l := range strings.Split(strings.Join(app.printQueue, "\n"), "\n") {
-		if strings.HasSuffix(ansi.Strip(l), " ") {
+		plain := ansi.Strip(l)
+		if strings.HasSuffix(plain, " ") && (!strings.HasPrefix(plain, "> ") || strings.HasSuffix(plain, "  ")) {
 			t.Fatalf("rendered line keeps trailing padding: %q", l)
 		}
 	}
