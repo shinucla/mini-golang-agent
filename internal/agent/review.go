@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kzhuang/mini-golang-agent/internal/llm"
-	"github.com/kzhuang/mini-golang-agent/internal/tools"
+	"github.com/shinucla/mini-golang-agent/internal/llm"
+	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
 const (

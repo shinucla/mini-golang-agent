@@ -7,7 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/kzhuang/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/config"
 )
 
 func TestPickerDeletesSavedKeyAfterConfirm(t *testing.T) {

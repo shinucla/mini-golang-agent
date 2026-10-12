@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/kzhuang/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/config"
 )
 
 type Role string

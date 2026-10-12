@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/kzhuang/mini-golang-agent/internal/mcp"
+	"github.com/shinucla/mini-golang-agent/internal/mcp"
 )
 
 func fakeMCPServer(t *testing.T) *httptest.Server {

@@ -14,8 +14,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/kzhuang/mini-golang-agent/internal/agent"
-	"github.com/kzhuang/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/agent"
+	"github.com/shinucla/mini-golang-agent/internal/config"
 )
 
 const (

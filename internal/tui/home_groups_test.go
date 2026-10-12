@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kzhuang/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/config"
 )
 
 func headers(view string) []string {

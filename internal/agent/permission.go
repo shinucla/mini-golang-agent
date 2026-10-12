@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kzhuang/mini-golang-agent/internal/tools"
+	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
 type Mode string

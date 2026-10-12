@@ -8,9 +8,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/kzhuang/mini-golang-agent/internal/agent"
-	"github.com/kzhuang/mini-golang-agent/internal/llm"
-	"github.com/kzhuang/mini-golang-agent/internal/tools"
+	"github.com/shinucla/mini-golang-agent/internal/agent"
+	"github.com/shinucla/mini-golang-agent/internal/llm"
+	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
 type command struct {

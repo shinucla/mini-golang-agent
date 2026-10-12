@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/kzhuang/mini-golang-agent/internal/agent"
+	"github.com/shinucla/mini-golang-agent/internal/agent"
 )
 
 func TestStartupOpensTheSessionListWhenSessionsExist(t *testing.T) {

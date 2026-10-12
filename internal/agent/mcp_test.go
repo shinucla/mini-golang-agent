@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kzhuang/mini-golang-agent/internal/agentdef"
-	"github.com/kzhuang/mini-golang-agent/internal/llm"
-	"github.com/kzhuang/mini-golang-agent/internal/tools"
+	"github.com/shinucla/mini-golang-agent/internal/agentdef"
+	"github.com/shinucla/mini-golang-agent/internal/llm"
+	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
 type fakeMCP struct{}

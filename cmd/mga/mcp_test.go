@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/kzhuang/mini-golang-agent/internal/config"
-	"github.com/kzhuang/mini-golang-agent/internal/mcp"
+	"github.com/shinucla/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/mcp"
 )
 
 func TestMCPAddRemoveApprove(t *testing.T) {

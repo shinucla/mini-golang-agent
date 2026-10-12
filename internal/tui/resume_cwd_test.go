@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/kzhuang/mini-golang-agent/internal/agent"
-	"github.com/kzhuang/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/agent"
+	"github.com/shinucla/mini-golang-agent/internal/config"
 )
 
 func TestResumedSessionMovesToLaunchFolder(t *testing.T) {

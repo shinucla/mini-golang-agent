@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kzhuang/mini-golang-agent/internal/agentdef"
-	"github.com/kzhuang/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/agentdef"
+	"github.com/shinucla/mini-golang-agent/internal/config"
 )
 
 const maxMemoryFile = 40000

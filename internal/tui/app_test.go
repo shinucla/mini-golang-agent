@@ -20,11 +20,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/kzhuang/mini-golang-agent/internal/agent"
-	"github.com/kzhuang/mini-golang-agent/internal/agentdef"
-	"github.com/kzhuang/mini-golang-agent/internal/config"
-	"github.com/kzhuang/mini-golang-agent/internal/llm"
-	"github.com/kzhuang/mini-golang-agent/internal/tools"
+	"github.com/shinucla/mini-golang-agent/internal/agent"
+	"github.com/shinucla/mini-golang-agent/internal/agentdef"
+	"github.com/shinucla/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/llm"
+	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
 type echoProvider struct{}

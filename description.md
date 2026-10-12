@@ -93,7 +93,7 @@ mini-golang-agent/
 └── description.md           this file
 ```
 
-Module path: `github.com/kzhuang/mini-golang-agent`. Go version: **1.24.2**, the highest version that any dependency needs (`charmbracelet/x/ansi`, `x/cellbuf`). Do not raise it without a reason. Write the `go` line with three parts (`1.24.2`, not `1.26`): an older Go then downloads a toolchain that exists. A two-part `go 1.26` made `go1.26 for linux/amd64: toolchain not available` on a Linux machine. Do not use APIs newer than Go 1.24, for example `sync.WaitGroup.Go` (Go 1.25).
+Module path: `github.com/shinucla/mini-golang-agent`. It was `github.com/kzhuang/mini-golang-agent` until 2026-10-12; the owner renamed it to match the GitHub repo `shinucla/mini-golang-agent`, so that `go install github.com/shinucla/mini-golang-agent/cmd/mga@latest` resolves. Go version: **1.24.2**, the highest version that any dependency needs (`charmbracelet/x/ansi`, `x/cellbuf`). Do not raise it without a reason. Write the `go` line with three parts (`1.24.2`, not `1.26`): an older Go then downloads a toolchain that exists. A two-part `go 1.26` made `go1.26 for linux/amd64: toolchain not available` on a Linux machine. Do not use APIs newer than Go 1.24, for example `sync.WaitGroup.Go` (Go 1.25).
 
 Dependencies (see `go.mod`):
 

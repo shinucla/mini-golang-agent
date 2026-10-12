@@ -1,4 +1,4 @@
-module github.com/kzhuang/mini-golang-agent
+module github.com/shinucla/mini-golang-agent
 
 go 1.24.2
 

@@ -14,13 +14,13 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/kzhuang/mini-golang-agent/internal/agent"
-	"github.com/kzhuang/mini-golang-agent/internal/agentdef"
-	"github.com/kzhuang/mini-golang-agent/internal/config"
-	"github.com/kzhuang/mini-golang-agent/internal/llm"
-	"github.com/kzhuang/mini-golang-agent/internal/mcp"
-	"github.com/kzhuang/mini-golang-agent/internal/tools"
-	"github.com/kzhuang/mini-golang-agent/internal/tui"
+	"github.com/shinucla/mini-golang-agent/internal/agent"
+	"github.com/shinucla/mini-golang-agent/internal/agentdef"
+	"github.com/shinucla/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/llm"
+	"github.com/shinucla/mini-golang-agent/internal/mcp"
+	"github.com/shinucla/mini-golang-agent/internal/tools"
+	"github.com/shinucla/mini-golang-agent/internal/tui"
 )
 
 const usage = `mga - a mini coding agent for the terminal
