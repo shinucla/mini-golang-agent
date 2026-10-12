@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"slices"
@@ -46,6 +47,8 @@ type modelPicker struct {
 	checking  bool
 	keyErr    string
 	notice    string
+	armed     string
+	note      string
 }
 
 func (a *App) openPicker() tea.Cmd {
@@ -206,9 +209,13 @@ func (m *modelPicker) update(a *App, msg tea.KeyMsg) tea.Cmd {
 	case stageModels:
 		return m.updateModels(a, msg)
 	}
+	armed := m.armed
+	m.armed, m.note = "", ""
 	switch msg.String() {
 	case "esc", "ctrl+c", "q":
 		a.closeOverlay()
+	case "d":
+		m.deleteKey(a, m.providers[m.cursor], armed)
 	case "up", "k":
 		m.cursor = max(m.cursor-1, 0)
 	case "down", "j":
@@ -223,6 +230,43 @@ func (m *modelPicker) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *modelPicker) deleteKey(a *App, name, armed string) {
+	pc, _ := a.rt.ProviderConfig(name)
+	switch {
+	case pc.Local:
+		m.note = styleDim.Render(name + " needs no key.")
+		return
+	case pc.APIKey == "":
+		if env := keyEnv(pc); env != "" {
+			m.note = styleDim.Render(fmt.Sprintf("mga has no saved key for %s. The key comes from $%s; remove it from your shell profile.", name, env))
+		} else {
+			m.note = styleDim.Render("mga has no saved key for " + name + ".")
+		}
+		return
+	case armed != name:
+		m.armed = name
+		m.note = styleErr.Render("Press d again to delete the saved key for " + name + ". Any other key cancels.")
+		return
+	}
+	if err := a.rt.SetProviderKey(name, ""); err != nil {
+		m.note = styleErr.Render("Could not delete the key: " + err.Error())
+		return
+	}
+	m.note = styleOK.Render("✔ Deleted the key for " + name + " from " + a.rt.Cfg.Path())
+	if pc, _ := a.rt.ProviderConfig(name); keyEnv(pc) != "" {
+		m.note += styleDim.Render(fmt.Sprintf(" · $%s is still set, so mga still has a key", keyEnv(pc)))
+	}
+}
+
+func keyEnv(pc config.ProviderConfig) string {
+	for _, name := range strings.Split(pc.APIKeyEnv, ",") {
+		if name = strings.TrimSpace(name); name != "" && os.Getenv(name) != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 func (m *modelPicker) updateKey(a *App, msg tea.KeyMsg) tea.Cmd {
@@ -323,7 +367,10 @@ func (m *modelPicker) providersView(a *App) string {
 		pc, _ := a.rt.ProviderConfig(name)
 		lines = append(lines, cursorLine(i == m.cursor, fmt.Sprintf("%-12s %s", name, providerStatus(pc))))
 	}
-	lines = append(lines, "", styleDim.Render("enter select · e enter or replace API key · esc close"))
+	if m.note != "" {
+		lines = append(lines, "", m.note)
+	}
+	lines = append(lines, "", styleDim.Render("enter select · e enter or replace API key · d delete saved key · esc close"))
 	return strings.Join(lines, "\n")
 }
 
