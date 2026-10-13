@@ -117,6 +117,13 @@ func (c *Config) AllProviders() map[string]ProviderConfig {
 	return all
 }
 
+func (c *Config) SetProvider(name string, pc ProviderConfig) {
+	if c.Providers == nil {
+		c.Providers = map[string]ProviderConfig{}
+	}
+	c.Providers[name] = pc
+}
+
 func (c *Config) SetProviderKey(name, key string) {
 	if c.Providers == nil {
 		c.Providers = map[string]ProviderConfig{}

@@ -81,6 +81,14 @@ func (r *Runtime) SetProviderKey(name, key string) error {
 	return r.Cfg.Save()
 }
 
+func (r *Runtime) SaveProvider(name string, pc config.ProviderConfig) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Cfg.SetProvider(name, pc)
+	delete(r.providers, name)
+	return r.Cfg.Save()
+}
+
 func (r *Runtime) SaveDefault(provider, model string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

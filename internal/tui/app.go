@@ -392,7 +392,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return a.spin.Tick
 	}
 	var cmd tea.Cmd
-	if a.picker != nil && a.picker.stage == stageKey {
+	if a.picker != nil && (a.picker.stage == stageKey || a.picker.stage == stageGateway) {
 		a.picker.keyInput, cmd = a.picker.keyInput.Update(msg)
 		return cmd
 	}

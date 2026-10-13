@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -32,6 +33,7 @@ const (
 	stageProviders pickerStage = iota
 	stageKey
 	stageModels
+	stageGateway
 )
 
 type modelPicker struct {
@@ -49,6 +51,7 @@ type modelPicker struct {
 	notice    string
 	armed     string
 	note      string
+	gateway   *config.ProviderConfig
 }
 
 func (a *App) openPicker() tea.Cmd {
@@ -81,9 +84,8 @@ func loadModels(rt *agent.Runtime, name string) tea.Cmd {
 	}
 }
 
-func checkKey(rt *agent.Runtime, name, key string) tea.Cmd {
+func checkKey(rt *agent.Runtime, name string, pc config.ProviderConfig, key string) tea.Cmd {
 	return func() tea.Msg {
-		pc, _ := rt.ProviderConfig(name)
 		pc.APIKey = key
 		p, err := llm.New(name, pc)
 		if err != nil {
@@ -186,20 +188,35 @@ func (m *modelPicker) keyChecked(a *App, msg keyCheckedMsg) {
 	}
 	m.checking = false
 	if msg.err != nil {
-		if isAuthError(msg.err) {
+		switch {
+		case isAuthError(msg.err):
 			m.keyErr = "The provider rejected this key: " + msg.err.Error()
-		} else {
+		case m.gateway != nil:
+			m.keyErr = "Could not reach the gateway or list its models: " + msg.err.Error()
+		default:
 			m.keyErr = "Could not check the key: " + msg.err.Error()
 		}
 		return
 	}
-	if err := a.rt.SetProviderKey(m.provider, msg.key); err != nil {
-		m.keyErr = "Could not save the key: " + err.Error()
+	notice := "✔ Key saved to " + a.rt.Cfg.Path()
+	var err error
+	if m.gateway != nil {
+		pc := *m.gateway
+		pc.APIKey, pc.Local = msg.key, msg.key == ""
+		err = a.rt.SaveProvider(m.provider, pc)
+		notice = "✔ Gateway saved as " + m.provider + " in " + a.rt.Cfg.Path()
+	} else {
+		err = a.rt.SetProviderKey(m.provider, msg.key)
+	}
+	if err != nil {
+		m.keyErr = "Could not save: " + err.Error()
 		return
 	}
+	m.gateway = nil
+	m.providers = a.rt.Cfg.ProviderNames()
 	a.rt.RememberModels(m.provider, msg.models)
 	m.showModels(a, msg.models)
-	m.notice = "✔ Key saved to " + a.rt.Cfg.Path()
+	m.notice = notice
 }
 
 func (m *modelPicker) update(a *App, msg tea.KeyMsg) tea.Cmd {
@@ -208,6 +225,8 @@ func (m *modelPicker) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		return m.updateKey(a, msg)
 	case stageModels:
 		return m.updateModels(a, msg)
+	case stageGateway:
+		return m.updateGateway(a, msg)
 	}
 	armed := m.armed
 	m.armed, m.note = "", ""
@@ -216,6 +235,8 @@ func (m *modelPicker) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		a.closeOverlay()
 	case "d":
 		m.deleteKey(a, m.providers[m.cursor], armed)
+	case "a":
+		return m.askGateway()
 	case "up", "k":
 		m.cursor = max(m.cursor-1, 0)
 	case "down", "j":
@@ -269,11 +290,75 @@ func keyEnv(pc config.ProviderConfig) string {
 	return ""
 }
 
+func (m *modelPicker) askGateway() tea.Cmd {
+	in := textinput.New()
+	in.Placeholder = "192.168.1.20:4000 or https://llm.example.com/v1"
+	in.Prompt = "> "
+	in.Width = keyInputSize
+	m.keyInput = in
+	m.stage = stageGateway
+	m.keyErr = ""
+	m.gateway = nil
+	return m.keyInput.Focus()
+}
+
+func (m *modelPicker) updateGateway(a *App, msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc":
+		m.stage = stageProviders
+		return nil
+	case "ctrl+c":
+		a.closeOverlay()
+		return nil
+	case "enter":
+		name, base, ok := gatewayAddress(m.keyInput.Value())
+		if !ok {
+			m.keyErr = "Enter an address such as 192.168.1.20:4000, or a full URL."
+			return nil
+		}
+		m.provider = name
+		m.gateway = &config.ProviderConfig{Type: config.TypeOpenAI, BaseURL: base}
+		return m.askKey("")
+	}
+	var cmd tea.Cmd
+	m.keyInput, cmd = m.keyInput.Update(msg)
+	return cmd
+}
+
+func gatewayAddress(raw string) (string, string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return "", "", false
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	if u.Path == "" {
+		u.Path = "/v1"
+	}
+	name := "gateway-" + strings.NewReplacer(".", "-", ":", "-", "[", "", "]", "").Replace(u.Host)
+	return name, u.String(), true
+}
+
+func (m *modelPicker) keyConfig(a *App) config.ProviderConfig {
+	if m.gateway != nil {
+		return *m.gateway
+	}
+	pc, _ := a.rt.ProviderConfig(m.provider)
+	return pc
+}
+
 func (m *modelPicker) updateKey(a *App, msg tea.KeyMsg) tea.Cmd {
 	switch msg.String() {
 	case "esc":
 		m.stage = stageProviders
 		m.cursor = max(slices.Index(m.providers, m.provider), 0)
+		m.gateway = nil
 		return nil
 	case "ctrl+c":
 		a.closeOverlay()
@@ -292,13 +377,15 @@ func (m *modelPicker) updateKey(a *App, msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		key := strings.TrimSpace(m.keyInput.Value())
-		if key == "" {
+		if key == "" && m.gateway == nil {
 			m.keyErr = "Paste a key first."
 			return nil
 		}
+		pc := m.keyConfig(a)
+		pc.Local = pc.Local || (m.gateway != nil && key == "")
 		m.checking = true
 		m.keyErr = ""
-		return tea.Batch(checkKey(a.rt, m.provider, key), a.spin.Tick)
+		return tea.Batch(checkKey(a.rt, m.provider, pc, key), a.spin.Tick)
 	}
 	var cmd tea.Cmd
 	m.keyInput, cmd = m.keyInput.Update(msg)
@@ -353,6 +440,8 @@ func (m *modelPicker) view(a *App) string {
 		body = m.keyView(a)
 	case stageModels:
 		body = m.modelsView(a)
+	case stageGateway:
+		body = m.gatewayView(a)
 	default:
 		body = m.providersView(a)
 	}
@@ -370,20 +459,39 @@ func (m *modelPicker) providersView(a *App) string {
 	if m.note != "" {
 		lines = append(lines, "", m.note)
 	}
-	lines = append(lines, "", styleDim.Render("enter select · e enter or replace API key · d delete saved key · esc close"))
+	lines = append(lines, "", styleDim.Render("enter select · e enter or replace API key · d delete saved key · a add a gateway · esc close"))
+	return strings.Join(lines, "\n")
+}
+
+func (m *modelPicker) gatewayView(a *App) string {
+	lines := []string{
+		styleBold.Render("Add an LLM gateway"), "",
+		"Enter the address of an OpenAI-compatible gateway, such as LiteLLM or vLLM.",
+		"Use an IP and port, or a full URL. mga adds /v1 when the address has no path.",
+		"", m.keyInput.View(),
+	}
+	if m.keyErr != "" {
+		lines = append(lines, styleErr.Render(clip(m.keyErr, a.width-8)))
+	}
+	lines = append(lines, "", styleDim.Render("enter next · esc back"))
 	return strings.Join(lines, "\n")
 }
 
 func (m *modelPicker) keyView(a *App) string {
-	pc, _ := a.rt.ProviderConfig(m.provider)
+	pc := m.keyConfig(a)
 	title := "Connect " + m.provider
 	if pc.Key() != "" {
 		title = "Replace the API key for " + m.provider
 	}
 	lines := []string{styleBold.Render(title), "", m.provider + " needs an API key."}
-	if pc.KeyURL != "" {
+	if m.gateway != nil {
+		lines = []string{styleBold.Render("Connect the gateway at " + pc.BaseURL), "", "Enter the gateway's API key. Leave it empty if the gateway needs no key."}
+	}
+	switch {
+	case m.gateway != nil:
+	case pc.KeyURL != "":
 		lines = append(lines, "Get a key: "+styleInfo.Render(pc.KeyURL)+styleDim.Render("  (ctrl+o opens it in the browser)"))
-	} else {
+	default:
 		lines = append(lines, "Get a key from the provider's dashboard ("+pc.BaseURL+").")
 	}
 	lines = append(lines, "", m.keyInput.View())
