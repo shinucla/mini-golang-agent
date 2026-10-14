@@ -63,6 +63,14 @@ func (s *Session) Save(dir string) error {
 	return s.write(dir)
 }
 
+func (s *Session) Clear(dir string) error {
+	s.Messages = nil
+	s.Usage = llm.Usage{}
+	s.ContextTokens = 0
+	s.Updated = time.Now()
+	return s.write(dir)
+}
+
 func (s *Session) Rename(dir, title string) error {
 	return s.SetTitle(dir, title, TitleFromUser)
 }

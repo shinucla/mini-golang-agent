@@ -129,6 +129,8 @@ mga names each new session for you. After your first message, the current model 
 
 `/help`, `/model [provider:model]`, `/agents`, `/tasks`, `/mcp`, `/mode [mode]`, `/permissions`, `/clear`, `/compact [focus]`, `/resume`, `/init`, `/status`, `/exit`.
 
+`/clear` works like Claude Code's: it clears the screen and empties the conversation, the context, the token counts, the to-do list, and the queued messages, but it keeps the same session: its id, its name, its pin, and its place in the session list. It does nothing while mga is working: press `esc` first. `/new` starts a new session.
+
 ## Tools
 
 `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebFetch`, `TodoWrite`, and `Task`.

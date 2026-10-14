@@ -622,7 +622,8 @@ func (a *App) needsTitle(text string) bool {
 }
 
 func needsTitle(r *sessionRun, text string) bool {
-	if r.session.TitleSource == agent.TitleFromUser || strings.HasPrefix(text, "<task-notification>") {
+	named := r.session.Title != "" && !r.session.Updated.IsZero()
+	if named || r.session.TitleSource == agent.TitleFromUser || strings.HasPrefix(text, "<task-notification>") {
 		return false
 	}
 	return !slices.ContainsFunc(r.history, func(m llm.Message) bool { return m.Role == llm.RoleUser })

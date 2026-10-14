@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/shinucla/mini-golang-agent/internal/agent"
+	"github.com/shinucla/mini-golang-agent/internal/config"
 	"github.com/shinucla/mini-golang-agent/internal/llm"
 	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
@@ -27,7 +28,7 @@ var commands = []command{
 	{"tasks", "", "Show running and finished sub-agents"},
 	{"mode", "[default|acceptEdits|plan|auto|bypassPermissions]", "Show or set the permission mode"},
 	{"permissions", "", "Show the permission mode and rules"},
-	{"clear", "", "Start a new conversation"},
+	{"clear", "", "Clear the conversation and its context; keep this session"},
 	{"compact", "[focus]", "Summarize the conversation to free context"},
 	{"resume", "[session id]", "Open a session by id, or list sessions and agents (← on an empty input)"},
 	{"init", "", "Create an MGA.md file with notes about this project"},
@@ -142,7 +143,9 @@ func (a *App) runCommand(text string) tea.Cmd {
 		a.emit(indent("Permission mode: "+string(a.rt.Perms.Mode()), "  ⎿  ", "     "))
 	case "permissions":
 		a.emit(a.permissionsText())
-	case "clear", "new":
+	case "clear":
+		a.clearConversation()
+	case "new":
 		a.newSession()
 	case "compact":
 		return a.compact(arg)
@@ -270,6 +273,25 @@ func (a *App) compact(focus string) tea.Cmd {
 		}
 		return compactDoneMsg{run: r, summary: resp.Message.Content}
 	})
+}
+
+func (a *App) clearConversation() {
+	r := a.sessionRun
+	if r.busy {
+		a.emit(formatError("mga is still working. Press esc to stop the turn, then run /clear again."))
+		return
+	}
+	r.history, r.pending, r.queue, r.notifications, r.todos = nil, nil, nil, nil, nil
+	r.usage, r.contextTokens = llm.Usage{}, 0
+	r.env = &tools.Env{Cwd: a.rt.Cwd}
+	a.wire(r)
+	a.resetScreen()
+	if 0 < len(r.session.Messages) || !r.session.Updated.IsZero() {
+		if err := r.session.Clear(config.SessionsDir()); err != nil {
+			a.emit(formatError("could not save the cleared session: " + err.Error()))
+		}
+	}
+	a.emit(formatNote("Cleared the conversation. This session keeps its id and its place in the list."))
 }
 
 func (a *App) compactDone(msg compactDoneMsg) tea.Cmd {
