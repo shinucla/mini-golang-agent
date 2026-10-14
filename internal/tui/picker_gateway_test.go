@@ -117,3 +117,62 @@ func TestPickerReportsUnreachableGateway(t *testing.T) {
 		t.Fatal("a gateway is saved only after a successful check")
 	}
 }
+
+func moveToProvider(t *testing.T, app *App, name string) {
+	t.Helper()
+	app.openPicker()
+	for range len(app.picker.providers) {
+		if app.picker.providers[app.picker.cursor] == name {
+			return
+		}
+		app.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	t.Fatalf("provider %q is not listed: %v", name, app.picker.providers)
+}
+
+func TestPickerEditsGatewayAddressAndKey(t *testing.T) {
+	srv := keyServer(t, "new-key")
+	app := newKeyApp(t, config.ProviderConfig{Type: config.TypeOpenAI, BaseURL: "http://127.0.0.1:1", Local: true})
+	old := config.ProviderConfig{Type: config.TypeOpenAI, BaseURL: "http://127.0.0.1:1/v1", APIKey: "revoked", Headers: map[string]string{"X-Team": "ads"}}
+	if err := app.rt.SaveProvider("gateway-old", old); err != nil {
+		t.Fatal(err)
+	}
+	moveToProvider(t, app, "gateway-old")
+
+	typeText(app, "e")
+	if app.picker.stage != stageGateway || app.picker.keyInput.Value() != old.BaseURL || !strings.Contains(ansi.Strip(app.View()), "Edit the gateway gateway-old") {
+		t.Fatalf("e on a gateway opens its address: stage=%v value=%q", app.picker.stage, app.picker.keyInput.Value())
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	typeText(app, srv.URL)
+	press(app, tea.KeyEnter)
+	typeText(app, "new-key")
+	press(app, tea.KeyEnter)
+	if app.picker.stage != stageModels {
+		t.Fatalf("the models show after the edit: err=%q", app.picker.keyErr)
+	}
+	pc, _ := app.rt.ProviderConfig("gateway-old")
+	if pc.BaseURL != srv.URL+"/v1" || pc.APIKey != "new-key" || pc.Headers["X-Team"] != "ads" {
+		t.Fatalf("the gateway keeps its name and settings with the new address and key: %+v", pc)
+	}
+	newName, _, _ := gatewayAddress(srv.URL)
+	if _, ok := app.rt.ProviderConfig(newName); ok {
+		t.Fatal("an edit does not add a second gateway")
+	}
+}
+
+func TestPickerAsksForGatewayAddressWhenKeyIsGone(t *testing.T) {
+	app := newKeyApp(t, config.ProviderConfig{Type: config.TypeOpenAI, BaseURL: "http://127.0.0.1:1", Local: true})
+	if err := app.rt.SaveProvider("gateway-nokey", config.ProviderConfig{Type: config.TypeOpenAI, BaseURL: "http://10.0.0.5:4000/v1"}); err != nil {
+		t.Fatal(err)
+	}
+	moveToProvider(t, app, "gateway-nokey")
+	press(app, tea.KeyEnter)
+	if app.picker.stage != stageGateway || app.picker.keyInput.Value() != "http://10.0.0.5:4000/v1" {
+		t.Fatalf("a gateway without a key opens its address first: stage=%v value=%q", app.picker.stage, app.picker.keyInput.Value())
+	}
+	press(app, tea.KeyEnter)
+	if app.picker.stage != stageKey || app.picker.provider != "gateway-nokey" {
+		t.Fatalf("enter keeps the address and asks for the key: stage=%v provider=%q", app.picker.stage, app.picker.provider)
+	}
+}

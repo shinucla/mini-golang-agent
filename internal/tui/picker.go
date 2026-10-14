@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	pickerRows   = 12
-	listTimeout  = 20 * time.Second
-	keyInputSize = 60
+	pickerRows    = 12
+	listTimeout   = 20 * time.Second
+	keyInputSize  = 60
+	gatewayPrefix = "gateway-"
 )
 
 type pickerStage int
@@ -52,6 +53,7 @@ type modelPicker struct {
 	armed     string
 	note      string
 	gateway   *config.ProviderConfig
+	editing   string
 }
 
 func (a *App) openPicker() tea.Cmd {
@@ -146,6 +148,9 @@ func (m *modelPicker) chooseProvider(a *App, name string) tea.Cmd {
 	m.notice = ""
 	pc, _ := a.rt.ProviderConfig(name)
 	if !pc.Configured() {
+		if isGateway(name) {
+			return m.editGateway(name, pc)
+		}
 		return m.askKey("")
 	}
 	m.stage = stageModels
@@ -245,7 +250,11 @@ func (m *modelPicker) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		return m.chooseProvider(a, m.providers[m.cursor])
 	case "e":
 		name := m.providers[m.cursor]
-		if pc, _ := a.rt.ProviderConfig(name); !pc.Local {
+		pc, _ := a.rt.ProviderConfig(name)
+		switch {
+		case isGateway(name):
+			return m.editGateway(name, pc)
+		case !pc.Local:
 			m.provider = name
 			return m.askKey("")
 		}
@@ -290,6 +299,17 @@ func keyEnv(pc config.ProviderConfig) string {
 	return ""
 }
 
+func isGateway(name string) bool {
+	return strings.HasPrefix(name, gatewayPrefix)
+}
+
+func (m *modelPicker) editGateway(name string, pc config.ProviderConfig) tea.Cmd {
+	cmd := m.askGateway()
+	m.editing = name
+	m.keyInput.SetValue(pc.BaseURL)
+	return cmd
+}
+
 func (m *modelPicker) askGateway() tea.Cmd {
 	in := textinput.New()
 	in.Placeholder = "192.168.1.20:4000 or https://llm.example.com/v1"
@@ -299,6 +319,7 @@ func (m *modelPicker) askGateway() tea.Cmd {
 	m.stage = stageGateway
 	m.keyErr = ""
 	m.gateway = nil
+	m.editing = ""
 	return m.keyInput.Focus()
 }
 
@@ -316,8 +337,15 @@ func (m *modelPicker) updateGateway(a *App, msg tea.KeyMsg) tea.Cmd {
 			m.keyErr = "Enter an address such as 192.168.1.20:4000, or a full URL."
 			return nil
 		}
+		pc := config.ProviderConfig{Type: config.TypeOpenAI}
+		if m.editing != "" {
+			name = m.editing
+			pc, _ = a.rt.ProviderConfig(name)
+			pc.APIKey, pc.Local = "", false
+		}
+		pc.BaseURL = base
 		m.provider = name
-		m.gateway = &config.ProviderConfig{Type: config.TypeOpenAI, BaseURL: base}
+		m.gateway = &pc
 		return m.askKey("")
 	}
 	var cmd tea.Cmd
@@ -341,7 +369,7 @@ func gatewayAddress(raw string) (string, string, bool) {
 	if u.Path == "" {
 		u.Path = "/v1"
 	}
-	name := "gateway-" + strings.NewReplacer(".", "-", ":", "-", "[", "", "]", "").Replace(u.Host)
+	name := gatewayPrefix + strings.NewReplacer(".", "-", ":", "-", "[", "", "]", "").Replace(u.Host)
 	return name, u.String(), true
 }
 
@@ -459,13 +487,17 @@ func (m *modelPicker) providersView(a *App) string {
 	if m.note != "" {
 		lines = append(lines, "", m.note)
 	}
-	lines = append(lines, "", styleDim.Render("enter select · e enter or replace API key · d delete saved key · a add a gateway · esc close"))
+	lines = append(lines, "", styleDim.Render("enter select · e edit the key (or a gateway's address) · d delete saved key · a add a gateway · esc close"))
 	return strings.Join(lines, "\n")
 }
 
 func (m *modelPicker) gatewayView(a *App) string {
+	title := "Add an LLM gateway"
+	if m.editing != "" {
+		title = "Edit the gateway " + m.editing
+	}
 	lines := []string{
-		styleBold.Render("Add an LLM gateway"), "",
+		styleBold.Render(title), "",
 		"Enter the address of an OpenAI-compatible gateway, such as LiteLLM or vLLM.",
 		"Use an IP and port, or a full URL. mga adds /v1 when the address has no path.",
 		"", m.keyInput.View(),
