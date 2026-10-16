@@ -188,7 +188,7 @@ Neutral types (`llm.go`):
 
 HTTP and SSE (`http.go`):
 
-- `postStream` sends JSON and returns the response for streaming. It retries up to 4 times on network errors and on status 408, 409, 429, 500, 502, 503, 504, 529. The wait is exponential (1s, 2s, 4s), or the `Retry-After` header value when it is 60 seconds or less. It does not retry after the stream starts.
+- `postStream` sends JSON and returns the response for streaming. It retries up to 4 times on network errors and on status 408, 409, 429, 500, 502, 503, 504, 529. A connect failure is the exception (`unreachable`: a `net.OpError` with `Op == "dial"`, such as a refused connection or no answer within `connectTimeout`, 10 s, set on the package `client` by `newClient`): it returns at once with `cannot reach the model server at <host:port>: … change the address with /model`, because a retry a second later cannot help. Before 2026-10-15 mga used `http.DefaultClient` (30 s connect limit) and retried this case, so an unreachable gateway kept print mode silent for about 2 minutes; a stack dump from the owner's Linux machine (TUF14) showed `getConn` and `netFD.connect` waiting on an `http://` gateway. `getJSON` (model lists) uses the same client and error (tests: `internal/llm/unreachable_test.go`). The wait is exponential (1s, 2s, 4s), or the `Retry-After` header value when it is 60 seconds or less. It does not retry after the stream starts.
 - `readAPIError` extracts `error.message` from a JSON body when one exists.
 - `readSSE` joins `data:` lines into one event and dispatches on each blank line. The scanner buffer is 32 MB. `errStopStream` ends the stream cleanly (OpenAI `[DONE]`).
 

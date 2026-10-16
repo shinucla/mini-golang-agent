@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +27,30 @@ func (e *APIError) Error() string {
 
 var errStopStream = errors.New("stop stream")
 
-const maxAttempts = 4
+const (
+	maxAttempts    = 4
+	connectTimeout = 10 * time.Second
+)
+
+var client = newClient(connectTimeout)
+
+func newClient(dialTimeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}).DialContext
+	return &http.Client{Transport: transport}
+}
+
+func unreachable(rawURL string, err error) error {
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) || opErr.Op != "dial" {
+		return nil
+	}
+	host := rawURL
+	if u, perr := url.Parse(rawURL); perr == nil && u.Host != "" {
+		host = u.Host
+	}
+	return fmt.Errorf("cannot reach the model server at %s: %w; check that the server runs and that this computer can reach it, or change the address with /model", host, opErr)
+}
 
 func postStream(ctx context.Context, url string, headers map[string]string, body any) (*http.Response, error) {
 	payload, err := json.Marshal(body)
@@ -43,10 +68,13 @@ func postStream(ctx context.Context, url string, headers map[string]string, body
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
+			}
+			if down := unreachable(url, err); down != nil {
+				return nil, down
 			}
 			lastErr = err
 		} else if resp.StatusCode < 300 {
@@ -77,8 +105,11 @@ func getJSON(ctx context.Context, url string, headers map[string]string, out any
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
+		if down := unreachable(url, err); down != nil {
+			return down
+		}
 		return err
 	}
 	defer resp.Body.Close()
