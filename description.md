@@ -146,7 +146,7 @@ Rules of the dependency graph:
 
 `runPrint` in `cmd/mga/main.go`:
 
-- reads extra prompt text from stdin when stdin is not a terminal,
+- reads extra prompt text from stdin when stdin is not a terminal (`addPipedInput`: with a `-p` prompt it waits at most `stdinWait`, 3 s, for the first data and then goes on without stdin, so an open pipe with no data no longer blocks forever, as it did before 2026-10-15; once data starts, it reads to EOF; without `-p` it waits, because stdin is the prompt; tests: `cmd/mga/stdin_test.go`),
 - sets `Runtime.BackgroundAllowed = false` (all sub-agents run in the foreground),
 - sets an approver that **denies** every call that needs approval and prints why to stderr,
 - sets `StopOnDeny = false`, so the model sees the denial and continues,

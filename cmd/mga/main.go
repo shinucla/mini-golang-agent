@@ -225,14 +225,52 @@ func (o printObserver) ToolResult(_ llm.ToolCall, result string, isErr bool) {
 	}
 }
 
+const stdinWait = 3 * time.Second
+
+func addPipedInput(prompt string, stdin io.Reader, wait time.Duration) (string, error) {
+	type chunk struct {
+		data []byte
+		err  error
+	}
+	first := make(chan chunk, 1)
+	go func() {
+		buf := make([]byte, 64*1024)
+		n, err := stdin.Read(buf)
+		first <- chunk{buf[:n], err}
+	}()
+	var c chunk
+	if prompt == "" {
+		c = <-first
+	} else {
+		select {
+		case c = <-first:
+		case <-time.After(wait):
+			fmt.Fprintf(os.Stderr, "mga: no input on stdin after %s; going on with the -p prompt only\n", wait)
+			return prompt, nil
+		}
+	}
+	data := c.data
+	switch {
+	case c.err == nil:
+		rest, err := io.ReadAll(stdin)
+		if err != nil {
+			return "", err
+		}
+		data = append(data, rest...)
+	case !errors.Is(c.err, io.EOF):
+		return "", c.err
+	}
+	if piped := strings.TrimSpace(string(data)); piped != "" {
+		prompt = strings.TrimSpace(prompt + "\n\n" + piped)
+	}
+	return prompt, nil
+}
+
 func runPrint(ctx context.Context, rt *agent.Runtime, session *agent.Session, prompt string, verbose bool) error {
 	if !isTerminal(os.Stdin) {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
+		var err error
+		if prompt, err = addPipedInput(prompt, os.Stdin, stdinWait); err != nil {
 			return err
-		}
-		if piped := strings.TrimSpace(string(data)); piped != "" {
-			prompt = strings.TrimSpace(prompt + "\n\n" + piped)
 		}
 	}
 	if prompt == "" {

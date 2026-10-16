@@ -71,10 +71,13 @@ mga --resume 20261005-101500-ab12cd   # resume a session by id
 mga --model gemini:gemini-2.5-pro     # pick provider and model
 mga -p "list the TODOs" --allowed-tools "Bash(grep:*)"   # one prompt, print the answer
 git diff | mga -p "review this diff"  # piped stdin is added to the prompt
+mga -p "..." < /dev/null              # never read stdin
 mga providers                         # provider status
 mga models [provider...]              # live model lists
 mga agents | agents show NAME | agents new NAME [--user] | agents delete NAME
 ```
+
+With `-p`, mga waits up to 3 seconds for piped input. When stdin is open but sends nothing (a script, a task runner, or another agent's shell), mga prints a note and goes on with the `-p` prompt only. Without `-p`, the piped input is the prompt, so mga waits for it.
 
 ### Status bar
 
