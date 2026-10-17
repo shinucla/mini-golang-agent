@@ -70,6 +70,8 @@ mga -c                                # continue the last session in this direct
 mga --resume 20261005-101500-ab12cd   # resume a session by id
 mga --model gemini:gemini-2.5-pro     # pick provider and model
 mga -p "list the TODOs" --allowed-tools "Bash(grep:*)"   # one prompt, print the answer
+mga -p --resume <id> "and now?"       # continue a session (flags in any order, like Claude Code)
+mga sessions [--all] [--json]         # list the sessions of this folder (or of every folder)
 git diff | mga -p "review this diff"  # piped stdin is added to the prompt
 mga -p "..." < /dev/null              # never read stdin
 mga providers                         # provider status
@@ -195,6 +197,29 @@ mga adds these files to the system prompt when they exist: `~/.mga/MGA.md`, then
 ## Sessions
 
 mga saves each conversation to `~/.mga/sessions/<id>.json` after every turn. `/compact` replaces the history with a summary from the model.
+
+### Use sessions from another program (a dashboard)
+
+A local tool, such as your own dashboard, can list sessions, show them, and continue them through the `mga` command:
+
+```sh
+mga sessions --json                    # sessions of the current folder
+mga sessions --dir ~/projects/app --json
+mga sessions --all --json              # every folder
+mga sessions show <id> --json          # the whole session, with all messages
+mga -p --resume <id> --output-format json "next step?"         # one JSON result object
+mga -p --resume <id> --output-format stream-json "next step?"  # one JSON event per line
+```
+
+- `--resume` runs the turn in the session's own folder, not in the folder of the calling program.
+- `--output-format json` prints `{"type":"result","session_id":…,"result":…,"is_error":…,"usage":{…}}`. `stream-json` first prints an `init` event, then `text_delta`, `reasoning_delta`, `assistant`, `tool_use`, `tool_result`, and `usage` events as they happen, and the same `result` object last. Without `--resume`, the `result` object gives the id of the new session.
+- The list gives `busy_pid` for a session that has a turn running in some mga process.
+
+The dashboard and the mga screen can work on the same session:
+
+- Only one process can run a turn on a session at a time. mga holds `<id>.lock` in the sessions folder during a turn. A second `mga -p` on that session fails at once with "session … is working in another mga process (pid …)", and the mga screen refuses the message and keeps it in the input box.
+- The mga screen checks its open sessions about once a second. When another process adds a turn, the screen shows "Another mga process updated this session" and prints the new messages. The session list refreshes when sessions change, and it marks a session that works in another process.
+- A save keeps a name, pin, or order that another process changed.
 
 ## Layout
 

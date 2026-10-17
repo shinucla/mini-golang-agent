@@ -31,6 +31,8 @@ type sessionRun struct {
 	usage         llm.Usage
 	contextTokens int
 	approvals     []*pendingApproval
+	unlock        func()
+	seenMod       time.Time
 }
 
 func (a *App) newRun(s *agent.Session) *sessionRun {
@@ -47,6 +49,7 @@ func (a *App) newRun(s *agent.Session) *sessionRun {
 	if r.provider == "" || r.model == "" {
 		r.provider, r.model = a.rt.Current()
 	}
+	a.markSeen(r)
 	a.wire(r)
 	a.runs[s.ID] = r
 	return r

@@ -43,6 +43,8 @@ type homeView struct {
 	showKeys    bool
 	searching   bool
 	search      textinput.Model
+	dirMod      time.Time
+	elsewhere   map[string]bool
 }
 
 var homeKeys = [][2]string{
@@ -650,6 +652,8 @@ func (h *homeView) row(a *App, item homeItem) string {
 	row := marker + fmt.Sprintf("%-40s ", clip(sessionName(s), 40)) + styleDim.Render(fmt.Sprintf("%-16s %4d msgs  %s", updated, messages, model))
 	if r, ok := a.runs[s.ID]; ok && r.busy {
 		row += "  " + a.workState(r)
+	} else if h.elsewhere[s.ID] {
+		row += "  " + styleAccent.Render("working in another mga")
 	}
 	if s.ID == a.session.ID {
 		row += styleOK.Render("  current")

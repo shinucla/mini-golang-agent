@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,7 +28,9 @@ const usage = `mga - a mini coding agent for the terminal
 
 Usage:
   mga [flags] [prompt]          start the interactive UI (optionally with a first prompt)
-  mga -p "prompt" [flags]       run one prompt, print the answer, and exit
+  mga -p [flags] "prompt"       run one prompt, print the answer, and exit (flags in any order)
+  mga sessions [--dir DIR | --all] [--json]   list sessions (default: this folder)
+  mga sessions show <id> [--json]             print one session
   mga models [provider...]      list the models of each configured provider
   mga providers                 list providers and their status
   mga agents [list]             list agent definitions
@@ -70,13 +73,16 @@ func run(args []string) error {
 			return agentsCommand(cwd, args[1:])
 		case "mcp":
 			return mcpCommand(cfg, cwd, args[1:])
+		case "sessions":
+			return sessionsCommand(cwd, args[1:])
 		}
 	}
 
 	fs := flag.NewFlagSet("mga", flag.ContinueOnError)
-	var printPrompt string
-	fs.StringVar(&printPrompt, "p", "", "run one prompt non-interactively and print the answer")
-	fs.StringVar(&printPrompt, "print", "", "same as -p")
+	var printMode bool
+	fs.BoolVar(&printMode, "p", false, "run the prompt non-interactively, print the answer, and exit")
+	fs.BoolVar(&printMode, "print", false, "same as -p")
+	outputFormat := fs.String("output-format", "text", "with -p: text, json, or stream-json")
 	modelRef := fs.String("model", "", "provider:model, a provider name, or a model id for the default provider")
 	continueLast := fs.Bool("c", false, "continue the most recent session in this directory")
 	resumeID := fs.String("resume", "", "resume a session by id")
@@ -88,11 +94,31 @@ func run(args []string) error {
 		fmt.Fprint(fs.Output(), usage)
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterleaved(fs, args)
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
 		return err
+	}
+	prompt := strings.Join(positional, " ")
+	switch *outputFormat {
+	case formatText, formatJSON, formatStream:
+	default:
+		return fmt.Errorf("unknown --output-format %q: use text, json, or stream-json", *outputFormat)
+	}
+
+	session, err := pickSession(cwd, *continueLast, *resumeID)
+	if err != nil {
+		return err
+	}
+	if *resumeID != "" && session.Cwd != "" && session.Cwd != cwd {
+		if info, err := os.Stat(session.Cwd); err == nil && info.IsDir() {
+			if err := os.Chdir(session.Cwd); err != nil {
+				return err
+			}
+			cwd = session.Cwd
+		}
 	}
 
 	mode, err := agent.ParseMode(*modeFlag)
@@ -115,10 +141,6 @@ func run(args []string) error {
 	rt.MCP = servers
 	defer servers.Close()
 
-	session, err := pickSession(cwd, *continueLast, *resumeID)
-	if err != nil {
-		return err
-	}
 	provider, model := cfg.ResolveDefault()
 	switch {
 	case *modelRef != "":
@@ -134,11 +156,30 @@ func run(args []string) error {
 	}
 	rt.SetCurrent(provider, model)
 
-	if printPrompt != "" || !isTerminal(os.Stdin) {
+	if printMode || !isTerminal(os.Stdin) {
 		connectForPrint(ctx, servers)
-		return runPrint(ctx, rt, session, printPrompt, *verbose)
+		return runPrint(ctx, rt, session, prompt, printOptions{verbose: *verbose, format: *outputFormat})
 	}
-	return tui.Run(rt, session, strings.Join(fs.Args(), " "), servers)
+	return tui.Run(rt, session, prompt, servers)
+}
+
+func parseInterleaved(fs *flag.FlagSet, args []string) ([]string, error) {
+	var tail []string
+	if i := slices.Index(args, "--"); 0 <= i {
+		args, tail = args[:i], args[i+1:]
+	}
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		args = fs.Args()
+		if len(args) == 0 {
+			return append(positional, tail...), nil
+		}
+		positional = append(positional, args[0])
+		args = args[1:]
+	}
 }
 
 func splitRules(s string) []string {
@@ -202,27 +243,54 @@ func isTerminal(f *os.File) bool {
 type printObserver struct {
 	verbose bool
 	session *agent.Session
+	events  *eventWriter
 }
 
-func (printObserver) Delta(llm.Delta)              {}
-func (printObserver) AssistantMessage(llm.Message) {}
+func (o printObserver) Delta(d llm.Delta) {
+	if d.Text != "" {
+		o.events.emit(map[string]any{"type": "text_delta", "text": d.Text})
+	}
+	if d.Reasoning != "" {
+		o.events.emit(map[string]any{"type": "reasoning_delta", "text": d.Reasoning})
+	}
+}
+
+func (o printObserver) AssistantMessage(m llm.Message) {
+	calls := make([]map[string]any, 0, len(m.ToolCalls))
+	for _, c := range m.ToolCalls {
+		calls = append(calls, map[string]any{"id": c.ID, "name": c.Name, "input": json.RawMessage(validJSON(c.Arguments))})
+	}
+	o.events.emit(map[string]any{"type": "assistant", "text": m.Content, "tool_calls": calls})
+}
 
 func (o printObserver) Usage(u llm.Usage) {
 	o.session.Usage.InputTokens += u.InputTokens
 	o.session.Usage.OutputTokens += u.OutputTokens
 	o.session.ContextTokens = u.InputTokens + u.OutputTokens
+	o.events.emit(map[string]any{"type": "usage", "input_tokens": u.InputTokens, "output_tokens": u.OutputTokens})
 }
 
 func (o printObserver) ToolStart(call llm.ToolCall, t tools.Tool) {
+	summary := t.Summary([]byte(call.Arguments))
 	if o.verbose {
-		fmt.Fprintf(os.Stderr, "⏺ %s(%s)\n", call.Name, t.Summary([]byte(call.Arguments)))
+		fmt.Fprintf(os.Stderr, "⏺ %s(%s)\n", call.Name, summary)
 	}
+	o.events.emit(map[string]any{"type": "tool_use", "id": call.ID, "name": call.Name, "summary": summary})
 }
 
-func (o printObserver) ToolResult(_ llm.ToolCall, result string, isErr bool) {
+func (o printObserver) ToolResult(call llm.ToolCall, result string, isErr bool) {
 	if o.verbose && isErr {
 		fmt.Fprintf(os.Stderr, "  ⎿ %s\n", tools.OneLine(result, 200))
 	}
+	o.events.emit(map[string]any{"type": "tool_result", "id": call.ID, "name": call.Name, "is_error": isErr, "content": tools.Truncate(result, 4000)})
+}
+
+func validJSON(s string) string {
+	if json.Valid([]byte(s)) {
+		return s
+	}
+	quoted, _ := json.Marshal(s)
+	return string(quoted)
 }
 
 const stdinWait = 3 * time.Second
@@ -266,7 +334,12 @@ func addPipedInput(prompt string, stdin io.Reader, wait time.Duration) (string, 
 	return prompt, nil
 }
 
-func runPrint(ctx context.Context, rt *agent.Runtime, session *agent.Session, prompt string, verbose bool) error {
+type printOptions struct {
+	verbose bool
+	format  string
+}
+
+func runPrint(ctx context.Context, rt *agent.Runtime, session *agent.Session, prompt string, opts printOptions) error {
 	if !isTerminal(os.Stdin) {
 		var err error
 		if prompt, err = addPipedInput(prompt, os.Stdin, stdinWait); err != nil {
@@ -286,18 +359,49 @@ func runPrint(ctx context.Context, rt *agent.Runtime, session *agent.Session, pr
 		return err
 	}
 	ag.StopOnDeny = false
+
+	dir := config.SessionsDir()
+	release, err := agent.LockSession(dir, session.ID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if latest, ok := session.Reload(dir); ok {
+		session = latest
+	}
+
+	var events *eventWriter
+	if opts.format == formatStream {
+		events = &eventWriter{out: os.Stdout}
+	}
+	provider, model := rt.Current()
+	events.emit(map[string]any{"type": "init", "session_id": session.ID, "cwd": rt.Cwd, "provider": provider, "model": model})
+
 	before := len(session.Messages)
 	history := append(session.Messages, llm.Message{Role: llm.RoleUser, Content: prompt})
-	msgs, runErr := ag.Run(ctx, history, printObserver{verbose: verbose, session: session})
+	msgs, runErr := ag.Run(ctx, history, printObserver{verbose: opts.verbose, session: session, events: events})
 	session.Provider, session.Model = rt.Current()
 	session.Cwd = rt.Cwd
 	session.Messages = msgs
-	if err := session.Save(config.SessionsDir()); err != nil && verbose {
+	if err := session.Save(dir); err != nil && opts.verbose {
 		fmt.Fprintln(os.Stderr, "mga: could not save session:", err)
 	}
-	if text := agent.LastAssistantText(msgs[min(before, len(msgs)):]); text != "" {
-		fmt.Println(text)
+	text := agent.LastAssistantText(msgs[min(before, len(msgs)):])
+	if opts.format == formatText {
+		if text != "" {
+			fmt.Println(text)
+		}
+		return runErr
 	}
+	result := map[string]any{
+		"type": "result", "session_id": session.ID, "result": text, "is_error": runErr != nil,
+		"provider": session.Provider, "model": session.Model, "num_messages": len(msgs),
+		"usage": map[string]any{"input_tokens": session.Usage.InputTokens, "output_tokens": session.Usage.OutputTokens},
+	}
+	if runErr != nil {
+		result["error"] = runErr.Error()
+	}
+	(&eventWriter{out: os.Stdout}).emit(result)
 	return runErr
 }
 

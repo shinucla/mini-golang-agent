@@ -257,6 +257,10 @@ func (a *App) compact(focus string) tea.Cmd {
 		prompt += "\nFocus on: " + focus
 	}
 	prompt += "\n\n<conversation>\n" + transcript(a.history) + "\n</conversation>"
+	if err := a.lockRun(r); err != nil {
+		a.emit(formatError(err.Error()))
+		return nil
+	}
 	ctx, cancel := context.WithCancel(a.rt.BaseCtx)
 	a.cancel = cancel
 	a.busy = true
@@ -290,6 +294,7 @@ func (a *App) clearConversation() {
 		if err := r.session.Clear(config.SessionsDir()); err != nil {
 			a.emit(formatError("could not save the cleared session: " + err.Error()))
 		}
+		a.markSeen(r)
 	}
 	a.emit(formatNote("Cleared the conversation. This session keeps its id and its place in the list."))
 }
@@ -303,6 +308,7 @@ func (a *App) compactDone(msg compactDoneMsg) tea.Cmd {
 		if current {
 			a.emit(formatError("compact failed: " + msg.err.Error()))
 		}
+		r.release()
 		return a.nextTurn(r)
 	}
 	r.history = []llm.Message{
@@ -311,6 +317,7 @@ func (a *App) compactDone(msg compactDoneMsg) tea.Cmd {
 	}
 	r.contextTokens = 0
 	a.saveRun(r)
+	r.release()
 	if current {
 		a.emit(styleDim.Render("  ⎿  Compacted the conversation"))
 	}

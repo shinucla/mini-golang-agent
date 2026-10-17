@@ -201,7 +201,7 @@ func (a *App) Init() tea.Cmd {
 	if a.mcp != nil {
 		a.reportMCP()
 	}
-	cmds := []tea.Cmd{textarea.Blink, a.learnContextWindow()}
+	cmds := []tea.Cmd{textarea.Blink, a.learnContextWindow(), syncTick()}
 	if a.initialPrompt != "" {
 		cmds = append(cmds, a.submit(a.initialPrompt))
 	}
@@ -291,6 +291,9 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case printDoneMsg:
 		a.printing = false
 		return nil
+	case syncTickMsg:
+		a.syncSessions()
+		return syncTick()
 	case spinner.TickMsg:
 		if !a.animating() {
 			return nil
@@ -581,6 +584,15 @@ func (a *App) startTurn(text, display string) tea.Cmd {
 
 func (a *App) startRunTurn(r *sessionRun, text, display string) tea.Cmd {
 	current := r == a.sessionRun
+	if err := a.lockRun(r); err != nil {
+		if current {
+			a.emit(formatError(err.Error()))
+			a.editInput(func() { a.input.SetValue(text) })
+		} else {
+			a.notice = "Session " + sessionName(r.session) + ": " + err.Error()
+		}
+		return nil
+	}
 	if display != "" && current {
 		a.emit(display)
 	}
@@ -591,6 +603,7 @@ func (a *App) startRunTurn(r *sessionRun, text, display string) tea.Cmd {
 		} else {
 			a.notice = "Session " + sessionName(r.session) + ": " + err.Error()
 		}
+		r.release()
 		return nil
 	}
 	firstRequest := needsTitle(r, text)
@@ -695,6 +708,7 @@ func (a *App) finishTurn(msg turnDoneMsg) tea.Cmd {
 		a.notice = "Session " + sessionName(r.session) + " finished · ← to switch"
 	}
 	a.saveRun(r)
+	r.release()
 	return a.nextTurn(r)
 }
 
@@ -753,6 +767,7 @@ func (a *App) saveRun(r *sessionRun) {
 	if err := r.session.Save(config.SessionsDir()); err != nil {
 		a.notice = "could not save session: " + err.Error()
 	}
+	a.markSeen(r)
 }
 
 func (a *App) quit() tea.Cmd {

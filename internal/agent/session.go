@@ -50,6 +50,7 @@ func (s *Session) Save(dir string) error {
 	if len(s.Messages) == 0 {
 		return nil
 	}
+	s.keepDiskMeta(dir)
 	if s.Title == "" {
 		for _, m := range s.Messages {
 			if m.Role == llm.RoleUser {
@@ -116,11 +117,17 @@ func (s *Session) write(dir string) error {
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, s.ID+".json.tmp")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	tmp, err := os.CreateTemp(dir, s.ID+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, s.ID+".json"))
+	_, werr := tmp.Write(data)
+	cerr := tmp.Close()
+	if err := errors.Join(werr, cerr); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(dir, s.ID+".json"))
 }
 
 func LoadSession(dir, id string) (*Session, error) {
