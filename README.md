@@ -190,6 +190,33 @@ mga mcp approve fs      # allow a server from this project's .mcp.json
 - **`/mcp`** lists the servers with their status and tool count. `enter` shows a server's details, tools, and error output, `a` approves, and `r` reconnects. When a server fails or waits for approval, the chat shows a short note.
 - Server instructions go into the system prompt. MCP resources and prompts are not supported yet.
 
+## Plugins
+
+mga installs Claude Code plugins from Claude Code plugin marketplaces (a git repo with `.claude-plugin/marketplace.json`):
+
+```sh
+mga plugin marketplace add https://github.com/vendasta/dev-agent-toolkit.git   # also owner/repo or a local folder
+mga plugin list --available                                                     # plugins in your marketplaces
+mga plugin install vendasta-dev-agent-toolkit@vendasta-dev-agent-toolkit
+mga plugin list                                                                 # installed plugins and what they add
+mga plugin disable <plugin>  |  mga plugin enable <plugin>
+mga plugin update [plugin]                                                      # git pull, then reinstall
+mga plugin uninstall <plugin>
+mga plugin marketplace list | update [name] | remove <name>
+```
+
+`<plugin>` can be `name@marketplace`, or only `name` when one marketplace has it. Restart mga after a change. In the chat, `/plugins` lists the installed plugins.
+
+What an enabled plugin gives mga:
+
+- **Skills** (`skills/<name>/SKILL.md`, and the paths that the marketplace or `plugin.json` lists) are named `plugin:skill`. The system prompt lists each skill with its description, and the model loads one with the `Skill` tool when your request matches it. You can also run one yourself: `/plugin:skill [arguments]`.
+- **Slash commands** (`commands/*.md`) become `/plugin:command`; `$ARGUMENTS` in the file is replaced by what you type after the command.
+- **Agents** (`agents/*.md`) become sub-agents named `plugin:agent`.
+- **MCP servers** (`mcpServers` in `plugin.json`, or `.mcp.json`) start with mga; `${CLAUDE_PLUGIN_ROOT}` becomes the plugin folder.
+- **Hooks** are not supported; `mga plugin list` says when a plugin has them.
+
+mga keeps its plugin data in `~/.mga/plugins/`, separate from Claude Code's. Plugins inside a marketplace repo are used from its git clone; a plugin from another repo gets its own clone under `cache/`. A plugin can run commands on your computer (MCP servers), so install plugins only from sources you trust.
+
 ## Project instructions
 
 mga adds these files to the system prompt when they exist: `~/.mga/MGA.md`, then `MGA.md`, `AGENTS.md`, `CLAUDE.md`, and `.mga/MGA.md` in the working directory. `/init` writes an `MGA.md` for the project.

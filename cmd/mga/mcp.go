@@ -11,6 +11,7 @@ import (
 
 	"github.com/shinucla/mini-golang-agent/internal/config"
 	"github.com/shinucla/mini-golang-agent/internal/mcp"
+	"github.com/shinucla/mini-golang-agent/internal/plugin"
 	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
@@ -90,6 +91,9 @@ func mcpCommand(cfg *config.Config, cwd string, args []string) error {
 
 func mcpList(cfg *config.Config, cwd string) error {
 	servers := mcp.Load(cwd, approvedFor(cfg, cwd))
+	if loaded, err := plugin.LoadEnabled(); err == nil {
+		servers.AddServers(loaded.MCP, mcp.ScopePlugin)
+	}
 	defer servers.Close()
 	for _, err := range servers.LoadErrors {
 		fmt.Fprintln(os.Stderr, "mga:", err)
@@ -119,6 +123,9 @@ func mcpList(cfg *config.Config, cwd string) error {
 
 func mcpGet(cfg *config.Config, cwd, name string) error {
 	servers := mcp.Load(cwd, approvedFor(cfg, cwd))
+	if loaded, err := plugin.LoadEnabled(); err == nil {
+		servers.AddServers(loaded.MCP, mcp.ScopePlugin)
+	}
 	defer servers.Close()
 	servers.ConnectAll(context.Background())
 	for _, s := range servers.Snapshot() {

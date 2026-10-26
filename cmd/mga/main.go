@@ -20,6 +20,7 @@ import (
 	"github.com/shinucla/mini-golang-agent/internal/config"
 	"github.com/shinucla/mini-golang-agent/internal/llm"
 	"github.com/shinucla/mini-golang-agent/internal/mcp"
+	"github.com/shinucla/mini-golang-agent/internal/plugin"
 	"github.com/shinucla/mini-golang-agent/internal/tools"
 	"github.com/shinucla/mini-golang-agent/internal/tui"
 )
@@ -31,6 +32,8 @@ Usage:
   mga -p [flags] "prompt"       run one prompt, print the answer, and exit (flags in any order)
   mga sessions [--dir DIR | --all] [--json]   list sessions (default: this folder)
   mga sessions show <id> [--json]             print one session
+  mga plugin marketplace add <git url>        add a plugin marketplace (Claude Code format)
+  mga plugin install <plugin>@<marketplace>   install a plugin; see: mga plugin help
   mga models [provider...]      list the models of each configured provider
   mga providers                 list providers and their status
   mga agents [list]             list agent definitions
@@ -75,6 +78,8 @@ func run(args []string) error {
 			return mcpCommand(cfg, cwd, args[1:])
 		case "sessions":
 			return sessionsCommand(cwd, args[1:])
+		case "plugin", "plugins":
+			return pluginCommand(args[1:])
 		}
 	}
 
@@ -140,6 +145,7 @@ func run(args []string) error {
 	servers.PersistApproval = rt.ApproveMCPServer
 	rt.MCP = servers
 	defer servers.Close()
+	applyPlugins(rt, servers)
 
 	provider, model := cfg.ResolveDefault()
 	switch {
@@ -461,6 +467,9 @@ func listModels(cfg *config.Config, names []string) error {
 
 func agentsCommand(cwd string, args []string) error {
 	store := &agentdef.Store{UserDir: config.UserAgentsDir(), ProjectDir: config.ProjectAgentsDir(cwd)}
+	if loaded, err := plugin.LoadEnabled(); err == nil {
+		store.Plugins = loaded.Agents
+	}
 	sub := "list"
 	if 0 < len(args) {
 		sub = args[0]

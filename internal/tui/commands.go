@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/shinucla/mini-golang-agent/internal/agent"
 	"github.com/shinucla/mini-golang-agent/internal/config"
 	"github.com/shinucla/mini-golang-agent/internal/llm"
+	"github.com/shinucla/mini-golang-agent/internal/plugin"
 	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
@@ -29,6 +31,7 @@ var commands = []command{
 	{"mode", "[default|acceptEdits|plan|auto|bypassPermissions]", "Show or set the permission mode"},
 	{"permissions", "", "Show the permission mode and rules"},
 	{"clear", "", "Clear the conversation and its context; keep this session"},
+	{"plugins", "", "List installed plugins and what they add"},
 	{"compact", "[focus]", "Summarize the conversation to free context"},
 	{"resume", "[session id]", "Open a session by id, or list sessions and agents (← on an empty input)"},
 	{"init", "", "Create an MGA.md file with notes about this project"},
@@ -57,12 +60,81 @@ func (a *App) suggestions() []command {
 		return nil
 	}
 	var out []command
-	for _, c := range commands {
+	for _, c := range a.allCommands() {
 		if strings.HasPrefix(c.name, value[1:]) {
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+func (a *App) allCommands() []command {
+	all := slices.Clone(commands)
+	for _, c := range a.rt.Commands {
+		all = append(all, command{name: c.Name, args: c.ArgHint, desc: tools.OneLine(c.Description, 80)})
+	}
+	for _, s := range a.rt.Skills {
+		all = append(all, command{name: s.Name, desc: tools.OneLine(s.Description, 80)})
+	}
+	return all
+}
+
+func (a *App) pluginPrompt(name, arg string) (string, bool, error) {
+	for _, c := range a.rt.Commands {
+		if c.Name != name {
+			continue
+		}
+		body, err := c.Load()
+		if err != nil {
+			return "", true, err
+		}
+		switch {
+		case strings.Contains(body, "$ARGUMENTS"):
+			body = strings.ReplaceAll(body, "$ARGUMENTS", arg)
+		case arg != "":
+			body += "\n\nARGUMENTS: " + arg
+		}
+		return body, true, nil
+	}
+	for _, s := range a.rt.Skills {
+		if s.Name == name {
+			text, err := tools.ExpandSkill(s, arg)
+			return text, true, err
+		}
+	}
+	return "", false, nil
+}
+
+func pluginsText() string {
+	loaded, err := plugin.LoadAll()
+	if err != nil {
+		return formatError(err.Error())
+	}
+	if len(loaded.Plugins) == 0 {
+		return styleDim.Render("  ⎿  No plugins. Add one with: mga plugin marketplace add <git url>, then mga plugin install <name>@<marketplace>")
+	}
+	var b strings.Builder
+	b.WriteString(styleBold.Render("Plugins") + styleDim.Render("  (manage them with mga plugin … in a shell; restart mga to apply changes)") + "\n")
+	for _, p := range loaded.Plugins {
+		state := styleOK.Render("enabled")
+		if !p.Enabled {
+			state = styleDim.Render("disabled")
+		}
+		fmt.Fprintf(&b, "  %s %s %s\n", styleAccent.Render(p.ID), styleDim.Render(p.Version), state)
+		fmt.Fprintf(&b, "    %s\n", styleDim.Render(pluginCounts(p)))
+		if p.Err != nil {
+			fmt.Fprintf(&b, "    %s\n", styleErr.Render(tools.OneLine(p.Err.Error(), 200)))
+		}
+	}
+	return "\n" + strings.TrimRight(b.String(), "\n")
+}
+
+func pluginCounts(p plugin.Info) string {
+	parts := []string{fmt.Sprintf("%d skills", len(p.Skills)), fmt.Sprintf("%d commands", len(p.Commands)), fmt.Sprintf("%d agents", len(p.Agents)), fmt.Sprintf("%d MCP servers", len(p.MCP))}
+	if p.Hooks {
+		parts = append(parts, "hooks (not supported in mga)")
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (a *App) suggestIndex(n int) int {
@@ -113,7 +185,7 @@ func (a *App) runCommand(text string) tea.Cmd {
 	a.emit(formatUser(text, a.width))
 	switch name {
 	case "help", "?":
-		a.emit(helpText())
+		a.emit(a.helpText())
 	case "model", "models":
 		if arg == "" {
 			return a.openPicker()
@@ -164,17 +236,35 @@ func (a *App) runCommand(text string) tea.Cmd {
 		a.emit(a.statusText())
 	case "exit", "quit", "q":
 		return a.quit()
+	case "plugins", "plugin":
+		a.emit(pluginsText())
 	default:
-		a.emit(formatError(fmt.Sprintf("Unknown command /%s. Type /help for the list.", name)))
+		text, ok, err := a.pluginPrompt(name, arg)
+		switch {
+		case !ok:
+			a.emit(formatError(fmt.Sprintf("Unknown command /%s. Type /help for the list.", name)))
+		case err != nil:
+			a.emit(formatError(err.Error()))
+		case a.busy:
+			a.queue = append(a.queue, text)
+		default:
+			return a.startTurn(text, "")
+		}
 	}
 	return nil
 }
 
-func helpText() string {
+func (a *App) helpText() string {
 	var b strings.Builder
 	b.WriteString(styleBold.Render("Commands") + "\n")
 	for _, c := range commands {
 		fmt.Fprintf(&b, "  %s %s\n", styleAccent.Render(fmt.Sprintf("/%-12s", c.name)), c.desc+styleDim.Render(" "+c.args))
+	}
+	if extra := a.allCommands()[len(commands):]; 0 < len(extra) {
+		b.WriteString("\n" + styleBold.Render("Plugin commands and skills") + "\n")
+		for _, c := range extra {
+			fmt.Fprintf(&b, "  %s %s\n", styleAccent.Render("/"+c.name), styleDim.Render(c.desc))
+		}
 	}
 	b.WriteString("\n" + styleBold.Render("Keys") + "\n")
 	for _, k := range [][2]string{

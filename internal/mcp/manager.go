@@ -94,6 +94,17 @@ func Load(cwd string, approved []string) *Manager {
 	return m
 }
 
+func (m *Manager) AddServers(servers map[string]ServerConfig, scope string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, name := range slices.Sorted(maps.Keys(servers)) {
+		if m.find(name) != nil {
+			continue
+		}
+		m.servers = append(m.servers, &server{name: name, scope: scope, cfg: servers[name], status: StatusConnecting, stderr: &tailBuffer{}})
+	}
+}
+
 func (m *Manager) notify() {
 	if m.OnChange != nil {
 		m.OnChange()

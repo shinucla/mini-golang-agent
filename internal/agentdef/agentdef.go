@@ -19,6 +19,7 @@ const (
 	ScopeBuiltin Scope = "built-in"
 	ScopeUser    Scope = "user"
 	ScopeProject Scope = "project"
+	ScopePlugin  Scope = "plugin"
 )
 
 type Definition struct {
@@ -58,11 +59,15 @@ func ValidateName(name string) error {
 type Store struct {
 	UserDir    string
 	ProjectDir string
+	Plugins    []Definition
 }
 
 func (s *Store) List() ([]Definition, error) {
 	byName := map[string]Definition{}
 	for _, d := range builtins() {
+		byName[d.Name] = d
+	}
+	for _, d := range s.Plugins {
 		byName[d.Name] = d
 	}
 	var errs []error
@@ -140,6 +145,9 @@ func (s *Store) Save(d Definition, previousPath string) (Definition, error) {
 func (s *Store) Delete(d Definition) error {
 	if d.Scope == ScopeBuiltin {
 		return errors.New("built-in agents cannot be deleted")
+	}
+	if d.Scope == ScopePlugin {
+		return errors.New("plugin agents cannot be deleted; disable or uninstall the plugin with mga plugin")
 	}
 	return os.Remove(d.Path)
 }

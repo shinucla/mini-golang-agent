@@ -33,6 +33,8 @@ type Runtime struct {
 	Approve           Approver
 	BaseCtx           context.Context
 	BackgroundAllowed bool
+	Skills            []tools.SkillInfo
+	Commands          []UserCommand
 
 	mu             sync.Mutex
 	providers      map[string]llm.Provider
@@ -137,6 +139,32 @@ func (r *Runtime) askPolicy() AskPolicy {
 	return policy
 }
 
+type UserCommand struct {
+	Name        string
+	Description string
+	ArgHint     string
+	Load        func() (string, error)
+}
+
+func (r *Runtime) skillTools() []tools.Tool {
+	if len(r.Skills) == 0 {
+		return nil
+	}
+	return []tools.Tool{tools.Skill{Skills: func() []tools.SkillInfo { return r.Skills }}}
+}
+
+func (r *Runtime) skillsPrompt() string {
+	if len(r.Skills) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n# Skills\nSkills hold expert instructions for some kinds of work. When the user's request matches a skill below, call the Skill tool with that name first, then follow what it returns. The user can also type /<skill name>.\n")
+	for _, s := range r.Skills {
+		fmt.Fprintf(&b, "- %s: %s\n", s.Name, tools.OneLine(s.Description, 250))
+	}
+	return b.String()
+}
+
 func (r *Runtime) mcpTools() []tools.Tool {
 	if r.MCP == nil {
 		return nil
@@ -223,8 +251,8 @@ func (r *Runtime) MainAgentWith(env *tools.Env, providerName, model string) (*Ag
 		Name:       "main",
 		Provider:   p,
 		Model:      model,
-		System:     MainPrompt(r.Cwd, providerName, model) + r.mcpInstructions(),
-		Tools:      append(tools.All(r.agentInfos), r.mcpTools()...),
+		System:     MainPrompt(r.Cwd, providerName, model) + r.mcpInstructions() + r.skillsPrompt(),
+		Tools:      append(append(tools.All(r.agentInfos), r.skillTools()...), r.mcpTools()...),
 		Env:        env,
 		Perms:      r.Perms,
 		Approve:    r.Approve,
@@ -275,7 +303,7 @@ func (r *Runtime) Spawn(ctx context.Context, req tools.SpawnRequest) (string, er
 		Provider:  p,
 		Model:     model,
 		System:    SubAgentPrompt(def, r.Cwd),
-		Tools:     tools.Without(tools.Select(append(tools.All(nil), r.mcpTools()...), def.Tools), "Task"),
+		Tools:     tools.Without(tools.Select(append(append(tools.All(nil), r.skillTools()...), r.mcpTools()...), def.Tools), "Task"),
 		Env:       &tools.Env{Cwd: r.Cwd},
 		Perms:     r.Perms,
 		Approve:   r.Approve,

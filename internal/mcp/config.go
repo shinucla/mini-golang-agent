@@ -16,6 +16,7 @@ import (
 const (
 	ScopeUser    = "user"
 	ScopeProject = "project"
+	ScopePlugin  = "plugin"
 
 	TransportStdio = "stdio"
 	TransportHTTP  = "http"
