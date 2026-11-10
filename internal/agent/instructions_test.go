@@ -70,6 +70,9 @@ func TestInstructionFilesFollowClaudeCode(t *testing.T) {
 	}
 
 	prompt := MainPrompt(cwd, "", "")
+	if !strings.Contains(prompt, "# Extend mga") || !strings.Contains(prompt, mgaHome+"/commands/<name>.md") || !strings.Contains(prompt, mgaHome+"/skills/<name>/SKILL.md") {
+		t.Fatalf("the prompt says where mga commands and skills go:\n%s", prompt)
+	}
 	if !strings.Contains(prompt, "(apply these rules only to files that match: **/*_test.go)") || !strings.Contains(prompt, "Imported style.") {
 		t.Fatalf("prompt misses the scoped rule or the import:\n%s", prompt)
 	}

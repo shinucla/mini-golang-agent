@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/shinucla/mini-golang-agent/internal/agentdef"
+	"github.com/shinucla/mini-golang-agent/internal/config"
 )
 
 const maxMemoryFile = 40000
@@ -43,8 +44,18 @@ func environment(cwd, provider, model string) string {
 	return env
 }
 
+func extendSection(home string) string {
+	return fmt.Sprintf(`# Extend mga
+When the user asks for a command, a slash command, a skill, or a rule inside mga, create the mga file below. Do not write a shell script or a program unless the user asks for one.
+- Slash command: %[1]s/commands/<name>.md for all projects, or .mga/commands/<name>.md for this project. The file is a prompt that mga sends to you when the user types /<name>. $ARGUMENTS becomes the text after the command, and $1 to $9 become single words. Optional frontmatter: description, argument-hint.
+- Skill: %[1]s/skills/<name>/SKILL.md, or .mga/skills/<name>/SKILL.md for this project. Frontmatter needs name and description; the description says when to use the skill. The body holds the instructions. Put helper scripts in the same folder.
+- Rule: add it to %[1]s/MGA.md or %[1]s/rules/<topic>.md for all projects, or to MGA.md or .mga/rules/<topic>.md for this project.
+- New commands and skills load when mga starts again. Tell the user to restart mga.
+- mga data: sessions are JSON files in %[1]s/sessions/. The shell command "mga sessions --all --json" lists them, and "mga sessions show <id> --json" prints one.`, home)
+}
+
 func MainPrompt(cwd, provider, model string) string {
-	parts := []string{mainInstructions, environment(cwd, provider, model)}
+	parts := []string{mainInstructions, extendSection(config.Home()), environment(cwd, provider, model)}
 	if mem := memory(cwd); mem != "" {
 		parts = append(parts, "# Project and user instructions\nFollow these instructions. They override the defaults above.\n\n"+mem)
 	}
