@@ -4,14 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
 type SkillInfo struct {
 	Name        string
 	Description string
+	ArgHint     string
 	Dir         string
+	Scope       string
+	UserOnly    bool
+	ModelOnly   bool
 	Load        func() (string, error)
+}
+
+func ModelSkills(all []SkillInfo) []SkillInfo {
+	var out []SkillInfo
+	for _, s := range all {
+		if !s.UserOnly {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 type Skill struct {
@@ -44,7 +59,7 @@ func (s Skill) Run(_ context.Context, _ *Env, input json.RawMessage) (string, er
 	}
 	var all []SkillInfo
 	if s.Skills != nil {
-		all = s.Skills()
+		all = ModelSkills(s.Skills())
 	}
 	info, err := FindSkill(all, in.Skill)
 	if err != nil {
@@ -74,7 +89,7 @@ func FindSkill(all []SkillInfo, name string) (SkillInfo, error) {
 	if len(matches) == 0 {
 		return SkillInfo{}, fmt.Errorf("unknown skill %q; available skills: %s", name, strings.Join(names, ", "))
 	}
-	return SkillInfo{}, fmt.Errorf("skill %q is in several plugins; use the full name", name)
+	return SkillInfo{}, fmt.Errorf("skill %q exists in several places; use the full name", name)
 }
 
 func ExpandSkill(info SkillInfo, args string) (string, error) {
@@ -82,9 +97,26 @@ func ExpandSkill(info SkillInfo, args string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("load skill %s: %w", info.Name, err)
 	}
-	out := fmt.Sprintf("Base directory for this skill: %s\n\n%s", info.Dir, body)
-	if args = strings.TrimSpace(args); args != "" {
-		out += "\n\nARGUMENTS: " + args
+	body = strings.NewReplacer("${CLAUDE_SKILL_DIR}", info.Dir, "${MGA_SKILL_DIR}", info.Dir).Replace(body)
+	return fmt.Sprintf("Base directory for this skill: %s\n\n%s", info.Dir, ExpandArgs(body, args)), nil
+}
+
+var positionalArg = regexp.MustCompile(`\$([1-9])`)
+
+func ExpandArgs(body, args string) string {
+	args = strings.TrimSpace(args)
+	words := strings.Fields(args)
+	usedArgs := strings.Contains(body, "$ARGUMENTS") || positionalArg.MatchString(body)
+	body = strings.ReplaceAll(body, "$ARGUMENTS", args)
+	body = positionalArg.ReplaceAllStringFunc(body, func(m string) string {
+		i := int(m[1] - '1')
+		if i < len(words) {
+			return words[i]
+		}
+		return ""
+	})
+	if !usedArgs && args != "" {
+		body += "\n\nARGUMENTS: " + args
 	}
-	return out, nil
+	return body
 }

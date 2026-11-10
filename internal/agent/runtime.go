@@ -143,23 +143,25 @@ type UserCommand struct {
 	Name        string
 	Description string
 	ArgHint     string
+	Scope       string
 	Load        func() (string, error)
 }
 
 func (r *Runtime) skillTools() []tools.Tool {
-	if len(r.Skills) == 0 {
+	if len(tools.ModelSkills(r.Skills)) == 0 {
 		return nil
 	}
 	return []tools.Tool{tools.Skill{Skills: func() []tools.SkillInfo { return r.Skills }}}
 }
 
 func (r *Runtime) skillsPrompt() string {
-	if len(r.Skills) == 0 {
+	skills := tools.ModelSkills(r.Skills)
+	if len(skills) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("\n\n# Skills\nSkills hold expert instructions for some kinds of work. When the user's request matches a skill below, call the Skill tool with that name first, then follow what it returns. The user can also type /<skill name>.\n")
-	for _, s := range r.Skills {
+	for _, s := range skills {
 		fmt.Fprintf(&b, "- %s: %s\n", s.Name, tools.OneLine(s.Description, 250))
 	}
 	return b.String()

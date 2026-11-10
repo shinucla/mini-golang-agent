@@ -58,6 +58,7 @@ func call(id, name string, args any) llm.ToolCall {
 
 func newTestRuntime(t *testing.T, p llm.Provider, mode Mode) *Runtime {
 	t.Setenv("MGA_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	cwd := t.TempDir()
 	rt := NewRuntime(context.Background(), &config.Config{}, cwd, NewPermissions(mode, nil))
 	rt.Defs = &agentdef.Store{UserDir: t.TempDir(), ProjectDir: t.TempDir()}

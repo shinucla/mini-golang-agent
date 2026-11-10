@@ -64,6 +64,48 @@ func TestPluginCommandsAndSkillsRunAsTurns(t *testing.T) {
 	}
 }
 
+func TestStandaloneSkillFlagsAndArguments(t *testing.T) {
+	app := newTestApp(t)
+	app.rt.RegisterProvider("fake", echoProvider{})
+	app.rt.Skills = []tools.SkillInfo{
+		{Name: "deploy", Description: "Deploy", Dir: "/s/deploy", Scope: "project", UserOnly: true, Load: func() (string, error) { return "Deploy $ARGUMENTS from ${CLAUDE_SKILL_DIR}.", nil }},
+		{Name: "style", Description: "Style guide", Dir: "/s/style", Scope: "user", ModelOnly: true, Load: func() (string, error) { return "Use tabs.", nil }},
+	}
+	app.rt.Commands = []agent.UserCommand{{
+		Name: "pair", Scope: "user",
+		Load: func() (string, error) { return "Pair $1 with $2.", nil },
+	}}
+
+	typeText(app, "/")
+	var names []string
+	for _, c := range app.suggestions() {
+		names = append(names, c.name)
+	}
+	if !slices.Contains(names, "deploy") || slices.Contains(names, "style") || !slices.Contains(names, "pair") {
+		t.Fatalf("the slash list hides model-only skills: %v", names)
+	}
+	app.editInput(app.input.Reset)
+
+	typeText(app, "/pair Ann Bo")
+	press(app, tea.KeyEnter)
+	if got := lastUserMessage(app); got != "Pair Ann with Bo." {
+		t.Fatalf("positional arguments: %q", got)
+	}
+	typeText(app, "/deploy prod")
+	press(app, tea.KeyEnter)
+	if got := lastUserMessage(app); !strings.HasSuffix(got, "Deploy prod from /s/deploy.") {
+		t.Fatalf("the skill fills in $ARGUMENTS and its folder: %q", got)
+	}
+
+	ag, _ := app.rt.MainAgentWith(app.env, "fake", "m")
+	if strings.Contains(ag.System, "- deploy:") || !strings.Contains(ag.System, "- style: Style guide") {
+		t.Fatalf("the model sees only skills it may call:\n%s", ag.System)
+	}
+	if _, err := (tools.Skill{Skills: func() []tools.SkillInfo { return app.rt.Skills }}).Run(t.Context(), nil, []byte(`{"skill":"deploy"}`)); err == nil {
+		t.Fatal("the model cannot call a user-only skill")
+	}
+}
+
 func TestMainAgentGetsTheSkillTool(t *testing.T) {
 	app := newTestApp(t)
 	app.rt.RegisterProvider("fake", echoProvider{})

@@ -9,12 +9,9 @@ import (
 	"time"
 
 	"github.com/shinucla/mini-golang-agent/internal/agentdef"
-	"github.com/shinucla/mini-golang-agent/internal/config"
 )
 
 const maxMemoryFile = 40000
-
-var MemoryFiles = []string{"MGA.md", "AGENTS.md", "CLAUDE.md", ".mga/MGA.md"}
 
 const mainInstructions = `You are mga, an interactive command-line coding agent. You help the user with software engineering tasks: fix bugs, add features, refactor code, explain code, and run commands.
 
@@ -68,20 +65,12 @@ func SubAgentPrompt(def agentdef.Definition, cwd string) string {
 
 func memory(cwd string) string {
 	var sections []string
-	paths := []string{filepath.Join(config.Home(), "MGA.md")}
-	for _, name := range MemoryFiles {
-		paths = append(paths, filepath.Join(cwd, name))
-	}
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
-			continue
+	for _, f := range InstructionFiles(cwd) {
+		header := "Contents of " + f.Path
+		if 0 < len(f.Paths) {
+			header += " (apply these rules only to files that match: " + strings.Join(f.Paths, ", ") + ")"
 		}
-		text := string(data)
-		if maxMemoryFile < len(text) {
-			text = text[:maxMemoryFile]
-		}
-		sections = append(sections, fmt.Sprintf("Contents of %s:\n\n%s", path, strings.TrimSpace(text)))
+		sections = append(sections, header+":\n\n"+f.Text)
 	}
 	return strings.Join(sections, "\n\n")
 }

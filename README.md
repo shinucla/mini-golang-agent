@@ -219,7 +219,31 @@ mga keeps its plugin data in `~/.mga/plugins/`, separate from Claude Code's. Plu
 
 ## Project instructions
 
-mga adds these files to the system prompt when they exist: `~/.mga/MGA.md`, then `MGA.md`, `AGENTS.md`, `CLAUDE.md`, and `.mga/MGA.md` in the working directory. `/init` writes an `MGA.md` for the project.
+mga reads the same instruction files as Claude Code, plus its own `MGA.md` files. It reads them again at the start of each turn. `/memory` lists the files that loaded. `/init` writes an `MGA.md` for the project.
+
+- **User files:** `~/.mga/MGA.md`, `~/.claude/CLAUDE.md`, and every `.md` file in `~/.mga/rules/` and `~/.claude/rules/`.
+- **Project files:** mga reads these files in the working directory and in each parent folder, outer folders first: `MGA.md`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.mga/MGA.md`, `.claude/CLAUDE.md`, and every `.md` file in `.mga/rules/` and `.claude/rules/` (subfolders too).
+- **Path rules:** a rule file with `paths:` in its frontmatter tells the model to use the rule only for files that match the patterns.
+- **Imports:** `@path/to/file.md` in a file adds that file too. The path is relative to the file, or starts with `~/`. Imports go 5 levels deep at most. mga does not read an `@` inside a code span or a code block.
+- mga skips an empty file and a file with the same text as one it already read. Each file is cut at 40 000 characters.
+
+`CLAUDE_CONFIG_DIR` changes the `~/.claude` folder, the same as in Claude Code.
+
+## Skills and slash commands
+
+mga reads skills and commands from the same folders as Claude Code, so the ones you made for Claude Code work in mga too.
+
+| | User (every project) | Project (working directory and its parent folders) |
+|---|---|---|
+| Skills | `~/.mga/skills/<name>/SKILL.md`, `~/.claude/skills/<name>/SKILL.md` | `.mga/skills/<name>/SKILL.md`, `.claude/skills/<name>/SKILL.md` |
+| Commands | `~/.mga/commands/**/*.md`, `~/.claude/commands/**/*.md` | `.mga/commands/**/*.md`, `.claude/commands/**/*.md` |
+
+- A skill's name is `name:` in its frontmatter, or else its folder name. A command's name is its file name, also in a subfolder.
+- When two have the same name, the first one wins: `~/.mga`, then `~/.claude`, then the nearest project folder.
+- The system prompt lists each skill with its `description`. The model loads a skill with the `Skill` tool when your request matches it. You can also type `/<skill> [arguments]`.
+- In the body, `$ARGUMENTS` becomes all the text after the command, and `$1` to `$9` become single words. With neither, mga adds the text at the end as `ARGUMENTS:`. In a skill, `${CLAUDE_SKILL_DIR}` becomes the skill folder.
+- Frontmatter: `description`, `argument-hint`, `disable-model-invocation: true` (only you can run the skill; the model does not see it), and `user-invocable: false` (only the model can use it; the slash list hides it).
+- The slash list and `/help` show `(user)` or `(project)` next to each one. Restart mga after you add or remove a skill or a command. A change to the text of a skill applies at once.
 
 ## Sessions
 

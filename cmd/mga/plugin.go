@@ -255,18 +255,39 @@ func listAvailable(out io.Writer) error {
 	return err
 }
 
+func applyStandalone(rt *agent.Runtime) {
+	loaded, err := plugin.LoadStandalone(rt.Cwd)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "mga: skills and commands:", err)
+	}
+	addSkills(rt, loaded.Skills, loaded.Commands)
+}
+
+func addSkills(rt *agent.Runtime, skills []plugin.Skill, commands []plugin.Command) {
+	for _, s := range skills {
+		rt.Skills = append(rt.Skills, tools.SkillInfo{
+			Name:        s.Name,
+			Description: s.Description,
+			ArgHint:     s.ArgHint,
+			Dir:         s.Dir,
+			Scope:       s.Scope,
+			UserOnly:    s.UserOnly,
+			ModelOnly:   s.ModelOnly,
+			Load:        func() (string, error) { return plugin.Body(s.File) },
+		})
+	}
+	for _, c := range commands {
+		rt.Commands = append(rt.Commands, agent.UserCommand{Name: c.Name, Description: c.Description, ArgHint: c.ArgHint, Scope: c.Scope, Load: func() (string, error) { return plugin.Body(c.File) }})
+	}
+}
+
 func applyPlugins(rt *agent.Runtime, servers *mcp.Manager) []agentdef.Definition {
 	loaded, err := plugin.LoadEnabled()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mga: plugins:", err)
 		return nil
 	}
-	for _, s := range loaded.Skills {
-		rt.Skills = append(rt.Skills, tools.SkillInfo{Name: s.Name, Description: s.Description, Dir: s.Dir, Load: func() (string, error) { return plugin.Body(s.File) }})
-	}
-	for _, c := range loaded.Commands {
-		rt.Commands = append(rt.Commands, agent.UserCommand{Name: c.Name, Description: c.Description, ArgHint: c.ArgHint, Load: func() (string, error) { return plugin.Body(c.File) }})
-	}
+	addSkills(rt, loaded.Skills, loaded.Commands)
 	rt.Defs.Plugins = loaded.Agents
 	if servers != nil {
 		servers.AddServers(loaded.MCP, mcp.ScopePlugin)

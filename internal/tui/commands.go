@@ -35,6 +35,7 @@ var commands = []command{
 	{"compact", "[focus]", "Summarize the conversation to free context"},
 	{"resume", "[session id]", "Open a session by id, or list sessions and agents (← on an empty input)"},
 	{"init", "", "Create an MGA.md file with notes about this project"},
+	{"memory", "", "List the instruction and rule files in the system prompt"},
 	{"status", "", "Show provider, model, session, and token usage"},
 	{"exit", "", "Quit mga"},
 }
@@ -71,10 +72,12 @@ func (a *App) suggestions() []command {
 func (a *App) allCommands() []command {
 	all := slices.Clone(commands)
 	for _, c := range a.rt.Commands {
-		all = append(all, command{name: c.Name, args: c.ArgHint, desc: tools.OneLine(c.Description, 80)})
+		all = append(all, command{name: c.Name, args: c.ArgHint, desc: scoped(c.Description, c.Scope)})
 	}
 	for _, s := range a.rt.Skills {
-		all = append(all, command{name: s.Name, desc: tools.OneLine(s.Description, 80)})
+		if !s.ModelOnly {
+			all = append(all, command{name: s.Name, args: s.ArgHint, desc: scoped(s.Description, s.Scope)})
+		}
 	}
 	return all
 }
@@ -88,21 +91,40 @@ func (a *App) pluginPrompt(name, arg string) (string, bool, error) {
 		if err != nil {
 			return "", true, err
 		}
-		switch {
-		case strings.Contains(body, "$ARGUMENTS"):
-			body = strings.ReplaceAll(body, "$ARGUMENTS", arg)
-		case arg != "":
-			body += "\n\nARGUMENTS: " + arg
-		}
-		return body, true, nil
+		return tools.ExpandArgs(body, arg), true, nil
 	}
 	for _, s := range a.rt.Skills {
-		if s.Name == name {
+		if s.Name == name && !s.ModelOnly {
 			text, err := tools.ExpandSkill(s, arg)
 			return text, true, err
 		}
 	}
 	return "", false, nil
+}
+
+func memoryText(cwd string) string {
+	files := agent.InstructionFiles(cwd)
+	if len(files) == 0 {
+		return styleDim.Render("  ⎿  No instruction files. Add MGA.md, CLAUDE.md, or a .md file in .mga/rules/ or .claude/rules/, or run /init.")
+	}
+	var b strings.Builder
+	b.WriteString(styleBold.Render("Instruction files") + styleDim.Render("  (read again at the start of each turn)") + "\n")
+	for _, f := range files {
+		line := "  " + styleAccent.Render(f.Path) + styleDim.Render(fmt.Sprintf("  %d chars", len(f.Text)))
+		if 0 < len(f.Paths) {
+			line += styleDim.Render("  only for " + strings.Join(f.Paths, ", "))
+		}
+		b.WriteString(line + "\n")
+	}
+	return "\n" + strings.TrimRight(b.String(), "\n")
+}
+
+func scoped(description, scope string) string {
+	description = tools.OneLine(description, 80)
+	if scope == "" {
+		return description
+	}
+	return "(" + scope + ") " + description
 }
 
 func pluginsText() string {
@@ -238,6 +260,8 @@ func (a *App) runCommand(text string) tea.Cmd {
 		return a.quit()
 	case "plugins", "plugin":
 		a.emit(pluginsText())
+	case "memory":
+		a.emit(memoryText(a.rt.Cwd))
 	default:
 		text, ok, err := a.pluginPrompt(name, arg)
 		switch {
@@ -261,7 +285,7 @@ func (a *App) helpText() string {
 		fmt.Fprintf(&b, "  %s %s\n", styleAccent.Render(fmt.Sprintf("/%-12s", c.name)), c.desc+styleDim.Render(" "+c.args))
 	}
 	if extra := a.allCommands()[len(commands):]; 0 < len(extra) {
-		b.WriteString("\n" + styleBold.Render("Plugin commands and skills") + "\n")
+		b.WriteString("\n" + styleBold.Render("Custom commands and skills") + "\n")
 		for _, c := range extra {
 			fmt.Fprintf(&b, "  %s %s\n", styleAccent.Render("/"+c.name), styleDim.Render(c.desc))
 		}

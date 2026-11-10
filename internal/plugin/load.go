@@ -19,8 +19,12 @@ import (
 type Skill struct {
 	Name        string
 	Description string
+	ArgHint     string
 	Dir         string
 	File        string
+	Scope       string
+	UserOnly    bool
+	ModelOnly   bool
 }
 
 type Command struct {
@@ -28,6 +32,57 @@ type Command struct {
 	Description string
 	ArgHint     string
 	File        string
+	Scope       string
+}
+
+func readSkill(dir, prefix string) (Skill, error) {
+	file := filepath.Join(dir, "SKILL.md")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return Skill{}, err
+	}
+	fm, body := frontmatter(data)
+	name := fm.Name
+	if name == "" {
+		name = filepath.Base(dir)
+	}
+	description := fm.Description
+	if description == "" {
+		description = firstLine(body)
+	}
+	return Skill{
+		Name:        prefix + name,
+		Description: description,
+		ArgHint:     fm.ArgumentHint,
+		Dir:         dir,
+		File:        file,
+		Scope:       ScopePlugin,
+		UserOnly:    fm.DisableModelInvocation,
+		ModelOnly:   fm.UserInvocable != nil && !*fm.UserInvocable,
+	}, nil
+}
+
+func readCommand(file, prefix string) (Command, error) {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return Command{}, err
+	}
+	fm, body := frontmatter(data)
+	description := fm.Description
+	if description == "" {
+		description = firstLine(body)
+	}
+	name := strings.TrimSuffix(filepath.Base(file), ".md")
+	return Command{Name: prefix + name, Description: description, ArgHint: fm.ArgumentHint, File: file, Scope: ScopePlugin}, nil
+}
+
+func firstLine(body string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if line = strings.TrimSpace(strings.TrimLeft(line, "# ")); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 type Info struct {
@@ -158,18 +213,12 @@ func loadPlugin(id, root string, entry *Entry) (pluginParts, error) {
 			continue
 		}
 		seen[dir] = true
-		file := filepath.Join(dir, "SKILL.md")
-		data, err := os.ReadFile(file)
+		s, err := readSkill(dir, prefix+":")
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		fm, _ := frontmatter(data)
-		name := fm.Name
-		if name == "" {
-			name = filepath.Base(dir)
-		}
-		parts.Skills = append(parts.Skills, Skill{Name: prefix + ":" + name, Description: fm.Description, Dir: dir, File: file})
+		parts.Skills = append(parts.Skills, s)
 	}
 
 	seen = map[string]bool{}
@@ -178,14 +227,12 @@ func loadPlugin(id, root string, entry *Entry) (pluginParts, error) {
 			continue
 		}
 		seen[file] = true
-		data, err := os.ReadFile(file)
+		c, err := readCommand(file, prefix+":")
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		fm, _ := frontmatter(data)
-		name := strings.TrimSuffix(filepath.Base(file), ".md")
-		parts.Commands = append(parts.Commands, Command{Name: prefix + ":" + name, Description: fm.Description, ArgHint: fm.ArgumentHint, File: file})
+		parts.Commands = append(parts.Commands, c)
 	}
 
 	seen = map[string]bool{}
@@ -348,9 +395,11 @@ func withRoot(cfg mcp.ServerConfig, root string) mcp.ServerConfig {
 }
 
 type front struct {
-	Name         string `yaml:"name"`
-	Description  string `yaml:"description"`
-	ArgumentHint string `yaml:"argument-hint"`
+	Name                   string `yaml:"name"`
+	Description            string `yaml:"description"`
+	ArgumentHint           string `yaml:"argument-hint"`
+	DisableModelInvocation bool   `yaml:"disable-model-invocation"`
+	UserInvocable          *bool  `yaml:"user-invocable"`
 }
 
 func frontmatter(data []byte) (front, string) {

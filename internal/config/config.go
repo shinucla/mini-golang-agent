@@ -75,6 +75,30 @@ func Home() string {
 	return filepath.Join(home, ".mga")
 }
 
+func ClaudeHome() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".claude"
+	}
+	return filepath.Join(home, ".claude")
+}
+
+func FolderChain(cwd string) []string {
+	var out []string
+	dir := filepath.Clean(cwd)
+	for {
+		out = append(out, dir)
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return out
+		}
+		dir = parent
+	}
+}
+
 func SessionsDir() string { return filepath.Join(Home(), "sessions") }
 
 func UserAgentsDir() string { return filepath.Join(Home(), "agents") }

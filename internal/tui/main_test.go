@@ -7,5 +7,12 @@ import (
 
 func TestMain(m *testing.M) {
 	syncEnabled = false
-	os.Exit(m.Run())
+	claudeHome, err := os.MkdirTemp("", "mga-claude-home")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("CLAUDE_CONFIG_DIR", claudeHome)
+	code := m.Run()
+	os.RemoveAll(claudeHome)
+	os.Exit(code)
 }
