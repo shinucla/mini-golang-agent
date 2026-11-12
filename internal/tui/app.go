@@ -66,6 +66,7 @@ type App struct {
 	runs map[string]*sessionRun
 
 	input        textarea.Model
+	focused      bool
 	spin         spinner.Model
 	inputHistory []string
 	historyPos   int
@@ -102,7 +103,7 @@ func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string, server
 	lipgloss.SetHasDarkBackground(dark)
 	app := newApp(rt, session, initialPrompt, dark)
 	app.mcp = servers
-	p := tea.NewProgram(app)
+	p := tea.NewProgram(app, tea.WithReportFocus())
 	app.attach(p)
 	if servers != nil {
 		servers.OnChange = func() { go p.Send(mcpChangedMsg{}) }
@@ -152,6 +153,7 @@ func newApp(rt *agent.Runtime, session *agent.Session, initialPrompt string, dar
 		height:        40,
 		runs:          map[string]*sessionRun{},
 		input:         ta,
+		focused:       true,
 		spin:          sp,
 		initialPrompt: initialPrompt,
 	}
@@ -274,11 +276,18 @@ func (a *App) flush() tea.Cmd {
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd := a.update(msg)
+	if !a.focused {
+		a.hideCursors()
+	}
 	return a, tea.Batch(cmd, a.flush())
 }
 
 func (a *App) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
+	case tea.BlurMsg:
+		return a.setTerminalFocus(false)
+	case tea.FocusMsg:
+		return a.setTerminalFocus(true)
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
 		a.input.SetWidth(max(a.width-6, 10))
