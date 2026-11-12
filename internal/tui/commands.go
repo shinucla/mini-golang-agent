@@ -36,6 +36,7 @@ var commands = []command{
 	{"resume", "[session id]", "Open a session by id, or list sessions and agents (← on an empty input)"},
 	{"init", "", "Create an MGA.md file with notes about this project"},
 	{"memory", "", "List the instruction and rule files in the system prompt"},
+	{"suggestions", "[on|off]", "Show or set the suggested next prompt after each reply"},
 	{"status", "", "Show provider, model, session, and token usage"},
 	{"exit", "", "Quit mga"},
 }
@@ -100,6 +101,28 @@ func (a *App) pluginPrompt(name, arg string) (string, bool, error) {
 		}
 	}
 	return "", false, nil
+}
+
+func (a *App) setSuggestions(arg string) string {
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "":
+	case "on":
+		if err := a.rt.SetPromptSuggestions(true); err != nil {
+			return formatError(err.Error())
+		}
+	case "off":
+		if err := a.rt.SetPromptSuggestions(false); err != nil {
+			return formatError(err.Error())
+		}
+		a.dropNextPrompt()
+	default:
+		return formatError("Usage: /suggestions [on|off]")
+	}
+	state := "off"
+	if a.rt.SuggestsPrompts() {
+		state = "on"
+	}
+	return styleDim.Render("  ⎿  Prompt suggestions are " + state + ". After each reply, mga asks the model for your likely next prompt and shows it in the empty input. Tab or → accepts it.")
 }
 
 func memoryText(cwd string) string {
@@ -262,6 +285,8 @@ func (a *App) runCommand(text string) tea.Cmd {
 		a.emit(pluginsText())
 	case "memory":
 		a.emit(memoryText(a.rt.Cwd))
+	case "suggestions":
+		a.emit(a.setSuggestions(arg))
 	default:
 		text, ok, err := a.pluginPrompt(name, arg)
 		switch {
@@ -298,7 +323,8 @@ func (a *App) helpText() string {
 		{"shift+tab", "cycle the permission mode: default → accept edits → plan → auto → bypass"},
 		{"left", "open the session and agent list (when the input is empty)"},
 		{"up/down", "browse earlier inputs, or select a command in the slash command list"},
-		{"tab", "complete the selected slash command"},
+		{"tab", "complete the selected slash command, or accept the suggested prompt"},
+		{"right", "accept the suggested prompt (when the input is empty)"},
 		{"ctrl+c twice", "quit"},
 	} {
 		fmt.Fprintf(&b, "  %s %s\n", styleAccent.Render(fmt.Sprintf("%-16s", k[0])), k[1])

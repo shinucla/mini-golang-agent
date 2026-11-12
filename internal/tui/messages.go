@@ -66,6 +66,11 @@ type (
 		models   []llm.Model
 		err      error
 	}
+	nextPromptMsg struct {
+		run  *sessionRun
+		seq  int
+		text string
+	}
 	titleMsg struct {
 		sessionID string
 		title     string

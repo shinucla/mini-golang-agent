@@ -18,6 +18,8 @@ const syncInterval = time.Second
 
 var syncEnabled = true
 
+var predictEnabled = true
+
 type syncTickMsg struct{}
 
 func syncTick() tea.Cmd {

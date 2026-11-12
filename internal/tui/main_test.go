@@ -7,6 +7,7 @@ import (
 
 func TestMain(m *testing.M) {
 	syncEnabled = false
+	predictEnabled = false
 	claudeHome, err := os.MkdirTemp("", "mga-claude-home")
 	if err != nil {
 		panic(err)

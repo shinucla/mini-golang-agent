@@ -376,6 +376,11 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case titleMsg:
 		a.applyTitle(msg)
 		return nil
+	case nextPromptMsg:
+		if r := msg.run; r.promptSeq == msg.seq && !r.busy {
+			r.nextPrompt = msg.text
+		}
+		return nil
 	case contextWindowMsg:
 		return nil
 	case editorDoneMsg:
@@ -467,6 +472,10 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if a.input.Value() == "" {
 			return a.openHome()
 		}
+	case "right":
+		if a.acceptNextPrompt() {
+			return nil
+		}
 	case "shift+tab":
 		a.setMode(a.rt.Perms.Mode().Next())
 		return nil
@@ -481,7 +490,7 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return a.submit(value)
 	case "tab":
-		if a.completeSuggestion() {
+		if a.completeSuggestion() || a.acceptNextPrompt() {
 			return nil
 		}
 	case "up":
@@ -612,6 +621,7 @@ func (a *App) startRunTurn(r *sessionRun, text, display string) tea.Cmd {
 	}
 	r.history = append(r.history, llm.Message{Role: llm.RoleUser, Content: text})
 	r.pending = nil
+	r.dropNextPrompt()
 	turn := agent.Turn{Owner: r.session.ID, Provider: r.provider, Model: r.model}
 	ctx, cancel := context.WithCancel(agent.WithTurn(a.rt.BaseCtx, turn))
 	r.cancel = cancel
@@ -709,7 +719,51 @@ func (a *App) finishTurn(msg turnDoneMsg) tea.Cmd {
 	}
 	a.saveRun(r)
 	r.release()
-	return a.nextTurn(r)
+	next := a.nextTurn(r)
+	if msg.err == nil && !r.busy {
+		return tea.Batch(next, a.nextPromptCmd(r))
+	}
+	return next
+}
+
+func (r *sessionRun) dropNextPrompt() {
+	r.nextPrompt = ""
+	r.promptSeq++
+}
+
+func (a *App) nextPromptCmd(r *sessionRun) tea.Cmd {
+	if !predictEnabled || !a.rt.SuggestsPrompts() {
+		return nil
+	}
+	r.dropNextPrompt()
+	rt, seq, history, provider, model := a.rt, r.promptSeq, slices.Clone(r.history), r.provider, r.model
+	return func() tea.Msg {
+		text, err := rt.SuggestNextPrompt(rt.BaseCtx, provider, model, history)
+		if err != nil {
+			return nil
+		}
+		return nextPromptMsg{run: r, seq: seq, text: text}
+	}
+}
+
+func (a *App) acceptNextPrompt() bool {
+	if a.nextPrompt == "" || a.input.Value() != "" {
+		return false
+	}
+	text := a.nextPrompt
+	a.editInput(func() { a.input.SetValue(text) })
+	return true
+}
+
+func (a *App) inputView() string {
+	if a.nextPrompt == "" || a.input.Value() != "" {
+		return a.input.View()
+	}
+	saved := a.input.Placeholder
+	a.input.Placeholder = tools.OneLine(a.nextPrompt, max(a.input.Width()-18, 10)) + "  · tab to accept"
+	view := a.input.View()
+	a.input.Placeholder = saved
+	return view
 }
 
 func (a *App) nextTurn(r *sessionRun) tea.Cmd {
@@ -895,7 +949,7 @@ func (a *App) chatView() string {
 	for _, q := range a.queue {
 		parts = append(parts, styleDim.Render(clip("  queued: "+tools.OneLine(q, 200), a.width)))
 	}
-	box := titledBox(a.input.View(), a.session.Title, max(a.width-2, 10))
+	box := titledBox(a.inputView(), a.session.Title, max(a.width-2, 10))
 	parts = append(parts, box, a.statusLine())
 	parts = append(parts, a.suggestionLines()...)
 	return strings.Join(parts, "\n")

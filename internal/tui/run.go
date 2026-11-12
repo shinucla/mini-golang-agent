@@ -33,6 +33,8 @@ type sessionRun struct {
 	approvals     []*pendingApproval
 	unlock        func()
 	seenMod       time.Time
+	nextPrompt    string
+	promptSeq     int
 }
 
 func (a *App) newRun(s *agent.Session) *sessionRun {

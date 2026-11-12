@@ -103,7 +103,8 @@ The status bar under the input box has two lines:
 | `shift+tab` | Cycle the permission mode: default → accept edits → plan → auto → bypass. mga saves the mode in `~/.mga/config.json`, so the next start uses it. Bypass is never saved. |
 | `←` (empty input) | Open the session and agent list |
 | `up` / `down` | Earlier inputs. While the slash command list shows, select a command in it (the selection wraps around). |
-| `tab` | Complete the selected slash command |
+| `tab` | Complete the selected slash command, or accept the suggested prompt |
+| `→` (empty input) | Accept the suggested prompt |
 | `enter` (slash command list shows) | Complete the selected slash command, like `tab`. It does not run it. Press `enter` again to run it. A command you typed in full runs at once. |
 | `ctrl+c` twice | Quit |
 
@@ -130,9 +131,20 @@ Sessions run in parallel. Open the list or another session while a session works
 
 mga names each new session for you. After your first message, the current model writes a title of at most 8 words that captures the idea, and the title shows on the input box and in the list. Until the title arrives, or if the model cannot make one, the session uses the start of your first message. A name you set with `ctrl+r` is never replaced.
 
+### Prompt suggestions
+
+After each reply, mga asks the current model for the message you will most likely type next. The model suggests a message only when the next step is clear. Most replies get no suggestion. The suggestion shows as dim ghost text in the empty input box, with "· tab to accept".
+
+- When the reply asks a question or offers options, the suggestion answers it with the option that the reply recommends.
+- When the reply proposes one next step, or the work is done and one next step is clearly the most likely, the suggestion is that step, such as "run the tests" or "commit and push".
+- An explanation, a question that only you can answer, or an error gets no suggestion.
+- `tab` or `→` puts the suggestion into the input box. Edit it or press `enter` to send it.
+- The suggestion stays until you send a message. Each time the input box is empty again, for example after you delete the text or press `esc`, the ghost text shows again. A failed or interrupted turn gets no suggestion.
+- Each suggestion is one extra short model request. `/suggestions off` turns the feature off, and `/suggestions on` turns it on again. mga saves the setting as `prompt_suggestions` in `~/.mga/config.json`.
+
 ### Slash commands
 
-`/help`, `/model [provider:model]`, `/agents`, `/tasks`, `/mcp`, `/mode [mode]`, `/permissions`, `/clear`, `/compact [focus]`, `/resume`, `/init`, `/status`, `/exit`.
+`/help`, `/model [provider:model]`, `/agents`, `/tasks`, `/mcp`, `/mode [mode]`, `/permissions`, `/clear`, `/compact [focus]`, `/resume`, `/init`, `/memory`, `/suggestions [on|off]`, `/plugins`, `/status`, `/exit`.
 
 `/clear` works like Claude Code's: it clears the screen and empties the conversation, the context, the token counts, the to-do list, and the queued messages, but it keeps the same session: its id, its name, its pin, and its place in the session list. It does nothing while mga is working: press `esc` first. `/new` starts a new session.
 
