@@ -71,6 +71,10 @@ func (a *App) closeOverlay() {
 	a.agents = nil
 	a.home = nil
 	a.mcpView = nil
+	if a.overlayFromHome {
+		a.overlayFromHome = false
+		a.openHome()
+	}
 }
 
 func loadModels(rt *agent.Runtime, name string) tea.Cmd {

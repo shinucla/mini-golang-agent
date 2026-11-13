@@ -83,16 +83,17 @@ type App struct {
 	mcpView     *mcpView
 	mcpReported map[string]mcp.Status
 
-	printQueue    []string
-	printing      bool
-	alt           bool
-	clearScreen   bool
-	replayPending bool
-	sized         bool
-	resizeSeq     int
-	notice       string
-	lastCtrlC     time.Time
-	initialPrompt string
+	printQueue      []string
+	printing        bool
+	alt             bool
+	overlayFromHome bool
+	clearScreen     bool
+	replayPending   bool
+	sized           bool
+	resizeSeq       int
+	notice          string
+	lastCtrlC       time.Time
+	initialPrompt   string
 }
 
 func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string, servers *mcp.Manager) error {
@@ -251,7 +252,7 @@ func (a *App) emit(s string) {
 
 func (a *App) flush() tea.Cmd {
 	var steps []tea.Cmd
-	if wantAlt := a.view == viewHome; wantAlt != a.alt {
+	if wantAlt := a.view == viewHome || a.overlayFromHome; wantAlt != a.alt {
 		a.alt = wantAlt
 		if wantAlt {
 			steps = append(steps, tea.EnterAltScreen)

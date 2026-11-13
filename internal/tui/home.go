@@ -406,7 +406,14 @@ func (h *homeView) command(a *App, text string) tea.Cmd {
 		return h.startNew(a, text, prompt)
 	}
 	a.closeOverlay()
-	return a.runCommand(text)
+	queued := len(a.printQueue)
+	cmd := a.runCommand(text)
+	switch a.view {
+	case viewModels, viewAgents, viewMCP:
+		a.overlayFromHome = true
+		a.printQueue = a.printQueue[:queued]
+	}
+	return cmd
 }
 
 func (h *homeView) startNew(a *App, typed, prompt string) tea.Cmd {
