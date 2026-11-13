@@ -35,7 +35,9 @@ type Runtime struct {
 	BackgroundAllowed bool
 	Skills            []tools.SkillInfo
 	Commands          []UserCommand
+	LoadExtensions    func() ([]tools.SkillInfo, []UserCommand, error)
 
+	extMu          sync.Mutex
 	mu             sync.Mutex
 	providers      map[string]llm.Provider
 	contextWindows map[string]int
@@ -147,15 +149,38 @@ type UserCommand struct {
 	Load        func() (string, error)
 }
 
-func (r *Runtime) skillTools() []tools.Tool {
-	if len(tools.ModelSkills(r.Skills)) == 0 {
+func (r *Runtime) ReloadExtensions() error {
+	if r.LoadExtensions == nil {
 		return nil
 	}
-	return []tools.Tool{tools.Skill{Skills: func() []tools.SkillInfo { return r.Skills }}}
+	skills, commands, err := r.LoadExtensions()
+	r.extMu.Lock()
+	defer r.extMu.Unlock()
+	r.Skills, r.Commands = skills, commands
+	return err
+}
+
+func (r *Runtime) SkillList() []tools.SkillInfo {
+	r.extMu.Lock()
+	defer r.extMu.Unlock()
+	return r.Skills
+}
+
+func (r *Runtime) CommandList() []UserCommand {
+	r.extMu.Lock()
+	defer r.extMu.Unlock()
+	return r.Commands
+}
+
+func (r *Runtime) skillTools() []tools.Tool {
+	if len(tools.ModelSkills(r.SkillList())) == 0 && r.LoadExtensions == nil {
+		return nil
+	}
+	return []tools.Tool{tools.Skill{Skills: r.SkillList}}
 }
 
 func (r *Runtime) skillsPrompt() string {
-	skills := tools.ModelSkills(r.Skills)
+	skills := tools.ModelSkills(r.SkillList())
 	if len(skills) == 0 {
 		return ""
 	}
@@ -249,6 +274,7 @@ func (r *Runtime) MainAgentWith(env *tools.Env, providerName, model string) (*Ag
 		return nil, err
 	}
 	env.Spawn = r.Spawn
+	r.ReloadExtensions()
 	return &Agent{
 		Name:       "main",
 		Provider:   p,

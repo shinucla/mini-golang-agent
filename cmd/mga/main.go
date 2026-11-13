@@ -145,8 +145,7 @@ func run(args []string) error {
 	servers.PersistApproval = rt.ApproveMCPServer
 	rt.MCP = servers
 	defer servers.Close()
-	applyStandalone(rt)
-	applyPlugins(rt, servers)
+	applyExtensions(rt, servers)
 
 	provider, model := cfg.ResolveDefault()
 	switch {

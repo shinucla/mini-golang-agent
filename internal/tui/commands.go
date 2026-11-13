@@ -72,10 +72,10 @@ func (a *App) suggestions() []command {
 
 func (a *App) allCommands() []command {
 	all := slices.Clone(commands)
-	for _, c := range a.rt.Commands {
+	for _, c := range a.rt.CommandList() {
 		all = append(all, command{name: c.Name, args: c.ArgHint, desc: scoped(c.Description, c.Scope)})
 	}
-	for _, s := range a.rt.Skills {
+	for _, s := range a.rt.SkillList() {
 		if !s.ModelOnly {
 			all = append(all, command{name: s.Name, args: s.ArgHint, desc: scoped(s.Description, s.Scope)})
 		}
@@ -84,7 +84,8 @@ func (a *App) allCommands() []command {
 }
 
 func (a *App) pluginPrompt(name, arg string) (string, bool, error) {
-	for _, c := range a.rt.Commands {
+	a.rt.ReloadExtensions()
+	for _, c := range a.rt.CommandList() {
 		if c.Name != name {
 			continue
 		}
@@ -94,7 +95,7 @@ func (a *App) pluginPrompt(name, arg string) (string, bool, error) {
 		}
 		return tools.ExpandArgs(body, arg), true, nil
 	}
-	for _, s := range a.rt.Skills {
+	for _, s := range a.rt.SkillList() {
 		if s.Name == name && !s.ModelOnly {
 			text, err := tools.ExpandSkill(s, arg)
 			return text, true, err

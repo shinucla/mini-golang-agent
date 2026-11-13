@@ -255,7 +255,7 @@ mga reads skills and commands from the same folders as Claude Code, so the ones 
 - The system prompt lists each skill with its `description`. The model loads a skill with the `Skill` tool when your request matches it. You can also type `/<skill> [arguments]`.
 - In the body, `$ARGUMENTS` becomes all the text after the command, and `$1` to `$9` become single words. With neither, mga adds the text at the end as `ARGUMENTS:`. In a skill, `${CLAUDE_SKILL_DIR}` becomes the skill folder.
 - Frontmatter: `description`, `argument-hint`, `disable-model-invocation: true` (only you can run the skill; the model does not see it), and `user-invocable: false` (only the model can use it; the slash list hides it).
-- The slash list and `/help` show `(user)` or `(project)` next to each one. Restart mga after you add or remove a skill or a command. A change to the text of a skill applies at once.
+- The slash list and `/help` show `(user)` or `(project)` next to each one. mga loads new, changed, and deleted skills and commands without a restart, as Claude Code does. It checks the folders each second, before each turn, and before a slash command runs. Rules and `CLAUDE.md` files apply from the next message.
 
 ## Sessions
 

@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/shinucla/mini-golang-agent/internal/agent"
-	"github.com/shinucla/mini-golang-agent/internal/agentdef"
 	"github.com/shinucla/mini-golang-agent/internal/mcp"
 	"github.com/shinucla/mini-golang-agent/internal/plugin"
 	"github.com/shinucla/mini-golang-agent/internal/tools"
@@ -255,17 +254,23 @@ func listAvailable(out io.Writer) error {
 	return err
 }
 
-func applyStandalone(rt *agent.Runtime) {
-	loaded, err := plugin.LoadStandalone(rt.Cwd)
-	if err != nil {
+func applyExtensions(rt *agent.Runtime, servers *mcp.Manager) {
+	pluginSkills, pluginCommands := applyPlugins(rt, servers)
+	rt.LoadExtensions = func() ([]tools.SkillInfo, []agent.UserCommand, error) {
+		loaded, err := plugin.LoadStandalone(rt.Cwd)
+		skills, commands := convertExtensions(loaded.Skills, loaded.Commands)
+		return append(skills, pluginSkills...), append(commands, pluginCommands...), err
+	}
+	if err := rt.ReloadExtensions(); err != nil {
 		fmt.Fprintln(os.Stderr, "mga: skills and commands:", err)
 	}
-	addSkills(rt, loaded.Skills, loaded.Commands)
 }
 
-func addSkills(rt *agent.Runtime, skills []plugin.Skill, commands []plugin.Command) {
+func convertExtensions(skills []plugin.Skill, commands []plugin.Command) ([]tools.SkillInfo, []agent.UserCommand) {
+	var skillInfos []tools.SkillInfo
+	var userCommands []agent.UserCommand
 	for _, s := range skills {
-		rt.Skills = append(rt.Skills, tools.SkillInfo{
+		skillInfos = append(skillInfos, tools.SkillInfo{
 			Name:        s.Name,
 			Description: s.Description,
 			ArgHint:     s.ArgHint,
@@ -277,20 +282,20 @@ func addSkills(rt *agent.Runtime, skills []plugin.Skill, commands []plugin.Comma
 		})
 	}
 	for _, c := range commands {
-		rt.Commands = append(rt.Commands, agent.UserCommand{Name: c.Name, Description: c.Description, ArgHint: c.ArgHint, Scope: c.Scope, Load: func() (string, error) { return plugin.Body(c.File) }})
+		userCommands = append(userCommands, agent.UserCommand{Name: c.Name, Description: c.Description, ArgHint: c.ArgHint, Scope: c.Scope, Load: func() (string, error) { return plugin.Body(c.File) }})
 	}
+	return skillInfos, userCommands
 }
 
-func applyPlugins(rt *agent.Runtime, servers *mcp.Manager) []agentdef.Definition {
+func applyPlugins(rt *agent.Runtime, servers *mcp.Manager) ([]tools.SkillInfo, []agent.UserCommand) {
 	loaded, err := plugin.LoadEnabled()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mga: plugins:", err)
-		return nil
+		return nil, nil
 	}
-	addSkills(rt, loaded.Skills, loaded.Commands)
 	rt.Defs.Plugins = loaded.Agents
 	if servers != nil {
 		servers.AddServers(loaded.MCP, mcp.ScopePlugin)
 	}
-	return loaded.Agents
+	return convertExtensions(loaded.Skills, loaded.Commands)
 }

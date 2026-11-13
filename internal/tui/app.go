@@ -319,6 +319,7 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return nil
 	case syncTickMsg:
 		a.syncSessions()
+		a.rt.ReloadExtensions()
 		return syncTick()
 	case spinner.TickMsg:
 		if !a.animating() {
