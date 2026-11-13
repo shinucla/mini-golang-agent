@@ -16,6 +16,7 @@ import (
 
 	"github.com/shinucla/mini-golang-agent/internal/agent"
 	"github.com/shinucla/mini-golang-agent/internal/config"
+	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
 const (
@@ -313,7 +314,7 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		case isCommand(text):
 			return h.command(a, text)
 		}
-		return h.startNew(a, text)
+		return h.startNew(a, text, text)
 	case "tab":
 		if !h.searching && a.completeSuggestion() {
 			return nil
@@ -394,25 +395,33 @@ func (h *homeView) command(a *App, text string) tea.Cmd {
 			return nil
 		}
 	}
+	prompt, isTurn, err := a.turnPrompt(name, strings.TrimSpace(arg))
+	if err != nil {
+		h.err = err.Error()
+		return nil
+	}
+	if isTurn {
+		return h.startNew(a, text, prompt)
+	}
 	a.closeOverlay()
 	return a.runCommand(text)
 }
 
-func (h *homeView) startNew(a *App, text string) tea.Cmd {
+func (h *homeView) startNew(a *App, typed, prompt string) tea.Cmd {
 	s := agent.NewSession(a.rt.Cwd)
 	s.Provider, s.Model = a.provider, a.model
+	s.Title, s.TitleSource = tools.OneLine(typed, 80), agent.TitleFromText
 	r := a.newRun(s)
 	a.editInput(a.input.Reset)
-	if len(a.inputHistory) == 0 || a.inputHistory[len(a.inputHistory)-1] != text {
-		a.inputHistory = append(a.inputHistory, text)
+	if len(a.inputHistory) == 0 || a.inputHistory[len(a.inputHistory)-1] != typed {
+		a.inputHistory = append(a.inputHistory, typed)
 	}
 	a.historyPos = len(a.inputHistory)
-	cmd := a.startRunTurn(r, text, "")
 	previous := a.sessionRun
 	a.sessionRun = r
 	a.rt.SetCurrent(r.provider, r.model)
 	a.resetScreen()
-	a.replay(r.transcript())
+	cmd := a.startRunTurn(r, prompt, formatUser(typed, a.width))
 	if previous.empty() {
 		delete(a.runs, previous.session.ID)
 	}

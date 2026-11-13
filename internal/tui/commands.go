@@ -83,6 +83,24 @@ func (a *App) allCommands() []command {
 	return all
 }
 
+var builtinCommands = map[string]bool{
+	"help": true, "?": true, "model": true, "models": true, "mcp": true, "agents": true,
+	"tasks": true, "bashes": true, "mode": true, "permissions": true, "clear": true, "new": true,
+	"compact": true, "resume": true, "continue": true, "sessions": true, "status": true,
+	"exit": true, "quit": true, "q": true, "plugins": true, "plugin": true, "memory": true,
+	"suggestions": true,
+}
+
+func (a *App) turnPrompt(name, arg string) (string, bool, error) {
+	switch {
+	case name == "init":
+		return initPrompt, true, nil
+	case builtinCommands[name]:
+		return "", false, nil
+	}
+	return a.pluginPrompt(name, arg)
+}
+
 func (a *App) pluginPrompt(name, arg string) (string, bool, error) {
 	a.rt.ReloadExtensions()
 	for _, c := range a.rt.CommandList() {
@@ -272,12 +290,6 @@ func (a *App) runCommand(text string) tea.Cmd {
 			return a.openHome()
 		}
 		return a.resumeSession(arg)
-	case "init":
-		if a.busy {
-			a.queue = append(a.queue, initPrompt)
-			return nil
-		}
-		return a.startTurn(initPrompt, "")
 	case "status":
 		a.emit(a.statusText())
 	case "exit", "quit", "q":
@@ -289,7 +301,7 @@ func (a *App) runCommand(text string) tea.Cmd {
 	case "suggestions":
 		a.emit(a.setSuggestions(arg))
 	default:
-		text, ok, err := a.pluginPrompt(name, arg)
+		text, ok, err := a.turnPrompt(name, arg)
 		switch {
 		case !ok:
 			a.emit(formatError(fmt.Sprintf("Unknown command /%s. Type /help for the list.", name)))
