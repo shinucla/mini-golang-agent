@@ -16,6 +16,8 @@ type (
 
 	resizeSettledMsg struct{ seq int }
 
+	screenSwitchMsg struct{}
+
 	deltaMsg struct {
 		run   *sessionRun
 		delta llm.Delta

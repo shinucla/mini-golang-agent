@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/shinucla/mini-golang-agent/internal/agent"
 	"github.com/shinucla/mini-golang-agent/internal/config"
@@ -28,9 +29,10 @@ const (
 	suggestionRows  = 8
 	liveStreamLines = 14
 	replayLimit     = 200
-	clearScrollback = "\x1b[3J"
 	resizeSettle    = 150 * time.Millisecond
 )
+
+var screenSwitchDelay = 50 * time.Millisecond
 
 type viewKind int
 
@@ -87,6 +89,12 @@ type App struct {
 	printing        bool
 	alt             bool
 	overlayFromHome bool
+	quitting        bool
+	printedRows     int
+	pendingRows     int
+	pendingReset    bool
+	switching       bool
+	switchReady     bool
 	homeProvider    string
 	homeModel       string
 	clearScreen     bool
@@ -109,22 +117,24 @@ func Run(rt *agent.Runtime, session *agent.Session, initialPrompt string, server
 	lipgloss.SetHasDarkBackground(dark)
 	app := newApp(rt, session, initialPrompt, dark)
 	app.mcp = servers
-	p := tea.NewProgram(app, tea.WithReportFocus())
+	options := []tea.ProgramOption{tea.WithReportFocus()}
+	if app.startsOnHome() {
+		options = append(options, tea.WithAltScreen())
+	}
+	p := tea.NewProgram(app, options...)
 	app.attach(p)
 	if servers != nil {
 		servers.OnChange = func() { go p.Send(mcpChangedMsg{}) }
 		go servers.ConnectAll(rt.BaseCtx)
 	}
 	_, err := p.Run()
+	fmt.Print(app.eraseOutput())
 	rt.Tasks.StopAll()
 	for _, r := range app.runs {
 		if r.cancel != nil {
 			r.cancel()
 		}
 		app.saveRun(r)
-	}
-	if 0 < len(app.session.Messages) {
-		fmt.Printf("\nResume this session with: mga --resume %s\n", app.session.ID)
 	}
 	return err
 }
@@ -219,12 +229,15 @@ func (a *App) Init() tea.Cmd {
 	if a.initialPrompt != "" {
 		cmds = append(cmds, a.submit(a.initialPrompt))
 	}
-	if a.initialPrompt == "" && a.sessionRun.empty() && a.hasSavedSessions() {
+	if a.startsOnHome() {
 		a.openHome()
 		a.alt = true
-		cmds = append(cmds, tea.EnterAltScreen)
 	}
 	return tea.Batch(cmds...)
+}
+
+func (a *App) startsOnHome() bool {
+	return a.initialPrompt == "" && a.sessionRun.empty() && a.hasSavedSessions()
 }
 
 func (a *App) hasSavedSessions() bool {
@@ -260,7 +273,19 @@ func (a *App) emit(s string) {
 
 func (a *App) flush() tea.Cmd {
 	var steps []tea.Cmd
-	if wantAlt := a.view == viewHome || a.overlayFromHome; wantAlt != a.alt {
+	wantAlt := a.view == viewHome || a.overlayFromHome
+	if wantAlt == a.alt {
+		a.switching, a.switchReady = false, false
+	}
+	if wantAlt != a.alt {
+		if 0 < screenSwitchDelay && !a.switchReady {
+			if a.switching {
+				return nil
+			}
+			a.switching = true
+			return tea.Tick(screenSwitchDelay, func(time.Time) tea.Msg { return screenSwitchMsg{} })
+		}
+		a.switching, a.switchReady = false, false
 		a.alt = wantAlt
 		if wantAlt {
 			steps = append(steps, tea.EnterAltScreen)
@@ -277,10 +302,11 @@ func (a *App) flush() tea.Cmd {
 	text := strings.Join(a.printQueue, "\n")
 	a.printQueue = nil
 	a.printing = true
+	a.pendingRows = screenRows(text, a.width)
 	if a.clearScreen {
 		a.clearScreen = false
-		text = clearScrollback + text
-		steps = append(steps, tea.ClearScreen)
+		text = a.eraseOutput() + text
+		a.pendingReset = true
 	}
 	steps = append(steps, tea.Println(text), func() tea.Msg { return printDoneMsg{} })
 	return tea.Sequence(steps...)
@@ -288,6 +314,10 @@ func (a *App) flush() tea.Cmd {
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd := a.update(msg)
+	if a.quitting {
+		a.printQueue = nil
+		return a, tea.Quit
+	}
 	if !a.focused {
 		a.hideCursors()
 	}
@@ -325,6 +355,14 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 		return nil
 	case printDoneMsg:
 		a.printing = false
+		if a.pendingReset {
+			a.printedRows, a.pendingReset = 0, false
+		}
+		a.printedRows += a.pendingRows
+		a.pendingRows = 0
+		return nil
+	case screenSwitchMsg:
+		a.switchReady = true
 		return nil
 	case syncTickMsg:
 		a.syncSessions()
@@ -861,6 +899,7 @@ func (a *App) saveRun(r *sessionRun) {
 }
 
 func (a *App) quit() tea.Cmd {
+	a.quitting = true
 	for _, r := range a.runs {
 		if r.cancel != nil {
 			r.cancel()
@@ -910,6 +949,9 @@ func toolSummary(name, args string) string {
 }
 
 func (a *App) View() string {
+	if a.quitting || a.switching {
+		return ""
+	}
 	if a.view == viewHome {
 		return a.home.view(a)
 	}
@@ -1108,4 +1150,19 @@ func (a *App) suggestionLines() []string {
 		lines = append(lines, clip("  "+name+" "+styleDim.Render(s[i].desc), a.width))
 	}
 	return lines
+}
+
+func screenRows(text string, width int) int {
+	rows := 0
+	for _, line := range strings.Split(text, "\n") {
+		rows += max(1, (ansi.StringWidth(line)+width-1)/max(width, 1))
+	}
+	return rows
+}
+
+func (a *App) eraseOutput() string {
+	if a.printedRows == 0 {
+		return ""
+	}
+	return ansi.CursorUp(a.printedRows) + ansi.EraseScreenBelow
 }
