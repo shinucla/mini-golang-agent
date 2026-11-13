@@ -241,9 +241,6 @@ func (h *homeView) items(a *App) []homeItem {
 			items = append(items, homeItem{session: s})
 		}
 	}
-	if query != "" {
-		return items
-	}
 	for _, t := range a.rt.Tasks.Snapshot() {
 		items = append(items, homeItem{task: t})
 	}
@@ -621,14 +618,24 @@ func (h *homeView) list(a *App, width, height int) string {
 	h.cursor = min(h.cursor, max(len(items)-1, 0))
 	lines := a.homeHeader(width - 2)
 	headerLines := len(lines)
-	if h.searching {
-		lines = append(lines, h.search.View()+styleDim.Render(fmt.Sprintf("  %d of %d sessions", len(items), len(h.sessions))))
-		if len(items) == 0 {
-			lines = append(lines, styleDim.Render("No session name matches."))
+	sessionRows := 0
+	for _, item := range items {
+		if item.isSession() {
+			sessionRows++
 		}
 	}
 	lines = append(lines, "")
-	start, end := window(len(items), h.cursor, max(height-13-headerLines, 3))
+	if h.searching && sessionRows == 0 {
+		lines = append(lines, styleDim.Render("No session name matches."))
+	}
+	bottomLines := 0
+	switch {
+	case h.renaming:
+		bottomLines = 3
+	case h.searching:
+		bottomLines = 3
+	}
+	start, end := window(len(items), h.cursor, max(height-13-headerLines-bottomLines, 3))
 	grouped := slices.ContainsFunc(h.sessions, func(s *agent.Session) bool { return a.rank(s) != 2 })
 	group := func(item homeItem) string {
 		switch {
@@ -664,11 +671,14 @@ func (h *homeView) list(a *App, width, height int) string {
 		}
 		lines = append(lines, cursorLine(i == h.cursor, clip(h.row(a, item), a.width-8)))
 	}
-	if !h.searching && len(items) == len(h.sessions) {
+	if sessionRows == len(items) {
 		lines = append(lines, "", styleBold.Render("Agents"), styleDim.Render("  No sub-agents in this run."))
 	}
 	if h.renaming {
 		lines = append(lines, "", h.nameInput.View(), styleDim.Render("enter save · esc cancel"))
+	}
+	if h.searching {
+		lines = append(lines, "", h.search.View()+styleDim.Render(fmt.Sprintf("  %d of %d sessions", sessionRows, len(h.sessions))), styleDim.Render("esc cancel"))
 	}
 	if h.err != "" {
 		lines = append(lines, styleErr.Render(h.err))
