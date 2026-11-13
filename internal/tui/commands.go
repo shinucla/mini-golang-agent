@@ -260,7 +260,7 @@ func (a *App) runCommand(text string) tea.Cmd {
 			a.emit(formatError(err.Error()))
 			return nil
 		}
-		a.setModel(provider, model)
+		a.setModel(provider, model, false)
 	case "mcp":
 		return a.openMCP()
 	case "agents":
@@ -375,18 +375,41 @@ func (a *App) statusText() string {
 	return indent(strings.Join(lines, "\n"), "  ⎿  ", "     ")
 }
 
-func (a *App) setModel(provider, model string) {
+func (a *App) setModel(provider, model string, forHome bool) {
+	if forHome {
+		a.setHomeModel(provider, model)
+		return
+	}
 	if _, err := a.rt.Provider(provider); err != nil {
 		a.emit(formatError(err.Error()))
 		return
 	}
 	a.rt.SetCurrent(provider, model)
 	a.provider, a.model = provider, model
-	note := "Set model to " + styleBold.Render(provider+":"+model)
-	if err := a.rt.SaveDefault(provider, model); err != nil {
-		note += styleErr.Render(" (not saved: " + err.Error() + ")")
+	a.emit(indent("Set the model of this session to "+styleBold.Render(provider+":"+model), "  ⎿  ", "     "))
+}
+
+func (a *App) setHomeModel(provider, model string) {
+	report := func(text string) {
+		if a.home != nil {
+			a.home.err = text
+		}
 	}
-	a.emit(indent(note, "  ⎿  ", "     "))
+	if _, err := a.rt.Provider(provider); err != nil {
+		report(err.Error())
+		return
+	}
+	a.homeProvider, a.homeModel = provider, model
+	if err := a.rt.SaveDefault(provider, model); err != nil {
+		report("The model is set but not saved: " + err.Error())
+	}
+}
+
+func (a *App) pickerCurrent() (string, string) {
+	if a.overlayFromHome {
+		return a.homeProvider, a.homeModel
+	}
+	return a.rt.Current()
 }
 
 func (a *App) compact(focus string) tea.Cmd {

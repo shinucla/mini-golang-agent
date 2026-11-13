@@ -140,7 +140,7 @@ func (m *modelPicker) showModels(a *App, models []llm.Model) {
 	m.stage = stageModels
 	m.loading = false
 	m.models, m.err, m.filter = models, nil, ""
-	current, model := a.rt.Current()
+	current, model := a.pickerCurrent()
 	m.cursor = 0
 	if current == m.provider {
 		m.cursor = max(slices.IndexFunc(m.models, func(x llm.Model) bool { return x.ID == model }), 0)
@@ -454,8 +454,9 @@ func (m *modelPicker) updateModels(a *App, msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		provider := m.provider
+		forHome := a.overlayFromHome
 		a.closeOverlay()
-		a.setModel(provider, model)
+		a.setModel(provider, model, forHome)
 	default:
 		if msg.Type == tea.KeyRunes {
 			m.filter += string(msg.Runes)
@@ -568,7 +569,7 @@ func (m *modelPicker) modelsView(a *App) string {
 		lines = append(lines, styleDim.Render("The provider returned no models."))
 	}
 	start, end := window(len(list), m.cursor, pickerRows)
-	currentProvider, currentModel := a.rt.Current()
+	currentProvider, currentModel := a.pickerCurrent()
 	for i := start; i < end; i++ {
 		model := list[i]
 		label := model.ID

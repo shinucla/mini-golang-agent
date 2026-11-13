@@ -15,7 +15,7 @@ func TestSessionListShowsTheHeaderInsideThePanel(t *testing.T) {
 	version.Override = "v9.9.9"
 	defer func() { version.Override = "" }()
 	app := newTestApp(t)
-	app.rt.SetCurrent("fake", "gpt-5")
+	app.setModel("fake", "gpt-5", true)
 	app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	app.openHome()
 

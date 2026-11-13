@@ -397,6 +397,15 @@ func (h *homeView) command(a *App, text string) tea.Cmd {
 			return nil
 		}
 	}
+	if name == "model" && strings.TrimSpace(arg) != "" {
+		provider, model, err := a.rt.Cfg.ParseModelRef(strings.TrimSpace(arg), a.homeProvider)
+		if err != nil {
+			h.err = err.Error()
+			return nil
+		}
+		a.setModel(provider, model, true)
+		return nil
+	}
 	prompt, isTurn, err := a.turnPrompt(name, strings.TrimSpace(arg))
 	if err != nil {
 		h.err = err.Error()
@@ -413,12 +422,15 @@ func (h *homeView) command(a *App, text string) tea.Cmd {
 		a.overlayFromHome = true
 		a.printQueue = a.printQueue[:queued]
 	}
+	if a.picker != nil {
+		a.picker.cursor = max(slices.Index(a.picker.providers, a.homeProvider), 0)
+	}
 	return cmd
 }
 
 func (h *homeView) startNew(a *App, typed, prompt string) tea.Cmd {
 	s := agent.NewSession(a.rt.Cwd)
-	s.Provider, s.Model = a.provider, a.model
+	s.Provider, s.Model = a.homeProvider, a.homeModel
 	s.Title, s.TitleSource = tools.OneLine(typed, 80), agent.TitleFromText
 	r := a.newRun(s)
 	a.editInput(a.input.Reset)
@@ -528,8 +540,9 @@ func (h *homeView) delete(a *App, s *agent.Session) {
 
 func (a *App) newSession() {
 	s := agent.NewSession(a.rt.Cwd)
-	s.Provider, s.Model = a.provider, a.model
+	s.Provider, s.Model = a.homeProvider, a.homeModel
 	a.sessionRun = a.newRun(s)
+	a.rt.SetCurrent(a.homeProvider, a.homeModel)
 	a.resetScreen()
 }
 
@@ -587,7 +600,7 @@ func (h *homeView) view(a *App) string {
 }
 
 func (a *App) homeHeader(width int) []string {
-	provider, model := a.rt.Current()
+	provider, model := a.homeProvider, a.homeModel
 	field := func(label, value string) string {
 		return styleBold.Render(fmt.Sprintf("%-10s", label)) + styleDim.Render(value)
 	}

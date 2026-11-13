@@ -37,7 +37,9 @@ Go 1.24.2 or later is necessary. Go 1.21 to 1.24.1 download Go 1.24.2 by themsel
 | `lmstudio` | OpenAI-compatible | none | `http://localhost:1234/v1` |
 | `openrouter`, `groq`, `mistral`, `xai` | OpenAI-compatible | `<NAME>_API_KEY` | |
 
-The model lists come live from each provider's `/models` endpoint. Use `/model` in the UI, or `mga models`. You can also type any model id that the list does not show.
+The model lists come live from each provider's `/models` endpoint. Use `/model` in the UI, or `mga models`.
+
+The session list has its own model, shown on its `Model` line. `/model` on the session list changes that model and saves it as the default; each new session starts with it. `/model` inside a session changes only that session's model, and opening a session never changes the session list model. You can also type any model id that the list does not show.
 
 To add a key, type `/model` and select the provider. If the provider has no key, mga shows the page where you get one (Ctrl+O opens it) and a masked input. mga checks the key with the provider before it saves the key in `~/.mga/config.json`. Press `e` on a provider to replace its key. Press `d` twice to delete the key that mga saved for it (any other key between the two presses cancels). A key in an environment variable such as `OPENROUTER_API_KEY` is not in the config file, so `d` cannot delete it; remove it from your shell profile.
 

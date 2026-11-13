@@ -588,14 +588,15 @@ func TestOpeningASessionRestoresTokensAndContext(t *testing.T) {
 	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
 	typeText(app, "/new")
 	app.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if line := strings.Split(app.statusLine(), "\n")[0]; !strings.Contains(line, "| 0 tokens | 100% ctx remaining") {
-		t.Fatalf("a new session must start at zero: %q", line)
+	if line := strings.Split(app.statusLine(), "\n")[0]; !strings.Contains(line, "m (fake) | 0 tokens") {
+		t.Fatalf("a new session must start at zero with the session list model: %q", line)
 	}
 
 	resumed, err := agent.LoadSession(config.SessionsDir(), old.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	app.rt.SetCurrent(resumed.Provider, resumed.Model)
 	started := newApp(app.rt, resumed, "", true)
 	started.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	if line := strings.Split(started.statusLine(), "\n")[0]; !strings.Contains(line, "52.0k tokens | 87% ctx remaining") {

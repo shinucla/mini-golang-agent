@@ -87,6 +87,8 @@ type App struct {
 	printing        bool
 	alt             bool
 	overlayFromHome bool
+	homeProvider    string
+	homeModel       string
 	clearScreen     bool
 	replayPending   bool
 	sized           bool
@@ -160,6 +162,12 @@ func newApp(rt *agent.Runtime, session *agent.Session, initialPrompt string, dar
 		focused:       true,
 		spin:          sp,
 		initialPrompt: initialPrompt,
+	}
+	a.homeProvider, a.homeModel = rt.Current()
+	if session.Provider != "" {
+		if provider, model := rt.Cfg.ResolveDefault(); provider != "" && model != "" {
+			a.homeProvider, a.homeModel = provider, model
+		}
 	}
 	a.sessionRun = a.newRun(session)
 	return a
