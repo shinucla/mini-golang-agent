@@ -23,6 +23,7 @@ import (
 	"github.com/shinucla/mini-golang-agent/internal/plugin"
 	"github.com/shinucla/mini-golang-agent/internal/tools"
 	"github.com/shinucla/mini-golang-agent/internal/tui"
+	"github.com/shinucla/mini-golang-agent/internal/version"
 )
 
 const usage = `mga - a mini coding agent for the terminal
@@ -95,6 +96,9 @@ func run(args []string) error {
 	skip := fs.Bool("dangerously-skip-permissions", false, "run every tool without approval")
 	allowed := fs.String("allowed-tools", "", `comma-separated allow rules, e.g. "Bash(go test:*),Edit,WebFetch(domain:go.dev)"`)
 	verbose := fs.Bool("verbose", false, "with -p, print tool activity to stderr")
+	var showVersion bool
+	fs.BoolVar(&showVersion, "version", false, "print the mga version and exit")
+	fs.BoolVar(&showVersion, "v", false, "same as --version")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), usage)
 		fs.PrintDefaults()
@@ -105,6 +109,10 @@ func run(args []string) error {
 			return nil
 		}
 		return err
+	}
+	if showVersion {
+		fmt.Println("mga", version.String())
+		return nil
 	}
 	prompt := strings.Join(positional, " ")
 	switch *outputFormat {

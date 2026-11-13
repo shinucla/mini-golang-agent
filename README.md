@@ -74,6 +74,7 @@ mga -p --resume <id> "and now?"       # continue a session (flags in any order, 
 mga sessions [--all] [--json]         # list the sessions of this folder (or of every folder)
 git diff | mga -p "review this diff"  # piped stdin is added to the prompt
 mga -p "..." < /dev/null              # never read stdin
+mga --version                         # print the version (also -v)
 mga providers                         # provider status
 mga models [provider...]              # live model lists
 mga agents | agents show NAME | agents new NAME [--user] | agents delete NAME
@@ -259,7 +260,7 @@ mga reads skills and commands from the same folders as Claude Code, so the ones 
 
 ## Sessions
 
-mga saves each conversation to `~/.mga/sessions/<id>.json` after every turn. `/compact` replaces the history with a summary from the model.
+mga saves each conversation to `~/.mga/sessions/<id>.json` after every turn. The session list (← on an empty input) shows four lines at the top, inside its border: the mga name, the version, the folder of the sessions, and the current model. `/compact` replaces the history with a summary from the model.
 
 ### Use sessions from another program (a dashboard)
 

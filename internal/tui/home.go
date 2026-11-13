@@ -13,10 +13,12 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/shinucla/mini-golang-agent/internal/agent"
 	"github.com/shinucla/mini-golang-agent/internal/config"
 	"github.com/shinucla/mini-golang-agent/internal/tools"
+	"github.com/shinucla/mini-golang-agent/internal/version"
 )
 
 const (
@@ -577,10 +579,28 @@ func (h *homeView) view(a *App) string {
 	return panel + "\n" + box + "\n" + bottom
 }
 
+func (a *App) homeHeader(width int) []string {
+	provider, model := a.rt.Current()
+	field := func(label, value string) string {
+		return styleBold.Render(fmt.Sprintf("%-10s", label)) + styleDim.Render(value)
+	}
+	header := []string{
+		styleAccent.Render("✻") + " " + field("mga", "mini Go agent"),
+		"  " + field("Version", version.String()),
+		"  " + field("Sessions", a.rt.Cwd),
+		"  " + field("Model", provider+":"+model),
+	}
+	for i, line := range header {
+		header[i] = ansi.Truncate(line, width, "…")
+	}
+	return header
+}
+
 func (h *homeView) list(a *App, width, height int) string {
 	items := h.items(a)
 	h.cursor = min(h.cursor, max(len(items)-1, 0))
-	lines := []string{styleBold.Render("Sessions") + styleDim.Render("  "+a.rt.Cwd)}
+	lines := a.homeHeader(width - 2)
+	headerLines := len(lines)
 	if h.searching {
 		lines = append(lines, h.search.View()+styleDim.Render(fmt.Sprintf("  %d of %d sessions", len(items), len(h.sessions))))
 		if len(items) == 0 {
@@ -588,7 +608,7 @@ func (h *homeView) list(a *App, width, height int) string {
 		}
 	}
 	lines = append(lines, "")
-	start, end := window(len(items), h.cursor, max(height-14, 3))
+	start, end := window(len(items), h.cursor, max(height-13-headerLines, 3))
 	grouped := slices.ContainsFunc(h.sessions, func(s *agent.Session) bool { return a.rank(s) != 2 })
 	group := func(item homeItem) string {
 		switch {
@@ -608,7 +628,7 @@ func (h *homeView) list(a *App, width, height int) string {
 		item := items[i]
 		if g := group(item); g != previous {
 			previous = g
-			if 2 < len(lines) {
+			if headerLines+1 < len(lines) {
 				lines = append(lines, "")
 			}
 			switch g {
