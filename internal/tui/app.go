@@ -29,6 +29,7 @@ const (
 	liveStreamLines = 14
 	replayLimit     = 200
 	clearScrollback = "\x1b[3J"
+	resizeSettle    = 150 * time.Millisecond
 )
 
 type viewKind int
@@ -87,7 +88,9 @@ type App struct {
 	alt           bool
 	clearScreen   bool
 	replayPending bool
-	notice        string
+	sized         bool
+	resizeSeq     int
+	notice       string
 	lastCtrlC     time.Time
 	initialPrompt string
 }
@@ -289,12 +292,26 @@ func (a *App) update(msg tea.Msg) tea.Cmd {
 	case tea.FocusMsg:
 		return a.setTerminalFocus(true)
 	case tea.WindowSizeMsg:
+		widthChanged := a.sized && msg.Width != a.width
+		a.sized = true
 		a.width, a.height = msg.Width, msg.Height
 		a.input.SetWidth(max(a.width-6, 10))
 		a.editInput(func() {})
 		if a.replayPending {
 			a.replayPending = false
 			a.replay(a.history)
+			return nil
+		}
+		if !widthChanged {
+			return nil
+		}
+		a.resizeSeq++
+		seq := a.resizeSeq
+		return tea.Tick(resizeSettle, func(time.Time) tea.Msg { return resizeSettledMsg{seq: seq} })
+	case resizeSettledMsg:
+		if msg.seq == a.resizeSeq && a.view != viewHome {
+			a.resetScreen()
+			a.replay(a.sessionRun.transcript())
 		}
 		return nil
 	case printDoneMsg:

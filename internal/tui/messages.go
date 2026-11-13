@@ -14,6 +14,8 @@ import (
 type (
 	printDoneMsg struct{}
 
+	resizeSettledMsg struct{ seq int }
+
 	deltaMsg struct {
 		run   *sessionRun
 		delta llm.Delta
