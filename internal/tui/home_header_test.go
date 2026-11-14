@@ -23,18 +23,21 @@ func TestSessionListShowsTheHeaderInsideThePanel(t *testing.T) {
 	if !strings.HasPrefix(strings.TrimSpace(lines[0]), "╭") {
 		t.Fatalf("the panel border is the top line: %q", lines[0])
 	}
-	want := []string{"│ ✻ mga       mini Go agent", "│   Version   v9.9.9", "│   Sessions  " + app.rt.Cwd[:20], "│   Model     fake:gpt-5"}
+	want := []string{"│ ✻ mga       mini Go agent - v9.9.9", "│   Model     fake:gpt-5"}
 	for i, w := range want {
 		if line := lines[1+i]; !strings.Contains(line, w) || !strings.HasPrefix(strings.TrimSpace(line), "│") {
 			t.Fatalf("line %d inside the border must show %q: %q", 1+i, w, line)
 		}
+	}
+	if strings.Contains(lines[3], "│ ✻") || strings.Contains(lines[3], "Model") || strings.Contains(ansi.Strip(app.View()), "Sessions  ") || strings.Contains(ansi.Strip(app.View()), "Version  ") {
+		t.Fatalf("the header has two lines only, with no Sessions or Version line:\n%s", ansi.Strip(app.View()))
 	}
 	if 30 < lipgloss.Height(app.View()) {
 		t.Fatalf("the view must fit the terminal: %d lines", lipgloss.Height(app.View()))
 	}
 
 	app.Update(tea.WindowSizeMsg{Width: 30, Height: 30})
-	for _, line := range strings.Split(app.View(), "\n")[:5] {
+	for _, line := range strings.Split(app.View(), "\n")[:3] {
 		if 30 < lipgloss.Width(line) {
 			t.Fatalf("a narrow terminal cuts the header: %q", line)
 		}

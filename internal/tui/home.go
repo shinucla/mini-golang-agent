@@ -569,9 +569,7 @@ func (a *App) homeHeader(width int) []string {
 		return styleBold.Render(fmt.Sprintf("%-10s", label)) + styleDim.Render(value)
 	}
 	header := []string{
-		styleAccent.Render("✻") + " " + field("mga", "mini Go agent"),
-		"  " + field("Version", version.String()),
-		"  " + field("Sessions", a.rt.Cwd),
+		styleAccent.Render("✻") + " " + field("mga", "mini Go agent - "+version.String()),
 		"  " + field("Model", provider+":"+model),
 	}
 	for i, line := range header {

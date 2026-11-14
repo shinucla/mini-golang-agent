@@ -262,7 +262,7 @@ mga reads skills and commands from the same folders as Claude Code, so the ones 
 
 ## Sessions
 
-mga saves each conversation to `~/.mga/sessions/<id>.json` after every turn. The session list (← on an empty input) shows four lines at the top, inside its border: the mga name, the version, the folder of the sessions, and the current model. `/compact` replaces the history with a summary from the model.
+mga saves each conversation to `~/.mga/sessions/<id>.json` after every turn. The session list (← on an empty input) shows two lines at the top, inside its border: the mga name with its version, and the current model. `/compact` replaces the history with a summary from the model.
 
 ### Use sessions from another program (a dashboard)
 
