@@ -23,13 +23,17 @@ func TestSessionListShowsTheHeaderInsideThePanel(t *testing.T) {
 	if !strings.HasPrefix(strings.TrimSpace(lines[0]), "╭") {
 		t.Fatalf("the panel border is the top line: %q", lines[0])
 	}
-	want := []string{"│ ✻ mga       mini Go agent - v9.9.9", "│   Model     fake:gpt-5"}
+	want := []string{"│  ✻  mga       mini Go agent - v9.9.9", "│     Model     fake:gpt-5"}
 	for i, w := range want {
 		if line := lines[1+i]; !strings.Contains(line, w) || !strings.HasPrefix(strings.TrimSpace(line), "│") {
 			t.Fatalf("line %d inside the border must show %q: %q", 1+i, w, line)
 		}
 	}
-	if strings.Contains(lines[3], "│ ✻") || strings.Contains(lines[3], "Model") || strings.Contains(ansi.Strip(app.View()), "Sessions  ") || strings.Contains(ansi.Strip(app.View()), "Version  ") {
+	column := func(line, text string) int { return ansi.StringWidth(line[:strings.Index(line, text)]) }
+	if name, label := column(lines[4], "(new session)"), column(lines[1], "mga"); name != label || column(lines[2], "Model") != label {
+		t.Fatalf("mga and Model start in the column of the session names:\n%s", strings.Join(lines[:5], "\n"))
+	}
+	if strings.Contains(lines[3], "✻") || strings.Contains(lines[3], "Model") || strings.Contains(ansi.Strip(app.View()), "Sessions  ") || strings.Contains(ansi.Strip(app.View()), "Version  ") {
 		t.Fatalf("the header has two lines only, with no Sessions or Version line:\n%s", ansi.Strip(app.View()))
 	}
 	if 30 < lipgloss.Height(app.View()) {
