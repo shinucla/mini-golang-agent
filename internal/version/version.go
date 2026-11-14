@@ -1,6 +1,6 @@
 package version
 
-const Current = "v1.1.2"
+const Current = "v1.1.3"
 
 var Override = ""
 

@@ -113,7 +113,7 @@ The status bar under the input box has two lines:
 
 ### Sessions and agents list
 
-When you start `mga` in a directory that has sessions, it opens this list first (with a prompt on the command line, `-c`, or `--resume`, it opens the chat instead). In the chat, press `←` when the input is empty. The list fills the screen and shows the sessions of this directory (● marks the current one, the session you opened last) and the sub-agents of this run. An unused new session shows as "(new session)" only when the directory has no other sessions; otherwise it stays hidden and the cursor starts on the first session. The input box and the hint line stay at the bottom of the screen; `?` (with an empty input box) shows the full help in place of the hint line. Type a message and press `enter` to start a new session with it: the new session becomes the current one (●), works in the background under **Working**, and you stay in the list. An empty "(new session)" placeholder disappears. Slash commands work in this box too: typing `/` shows the matching commands at the bottom, `up`/`down` select a command (the session cursor stays), `tab` or `enter` completes the selected command, and `enter` on a full command closes the list and runs it as in the chat (plain `/resume` stays in the list).
+When you start `mga` in a directory that has sessions, it opens this list first (with a prompt on the command line, `-c`, or `--resume`, it opens the chat instead). In the chat, press `←` when the input is empty. The list fills the screen and shows the sessions of this directory (● marks the current one, the session you opened last). Sub-agents do not show here; use `/tasks` to see, stop, or read them. An unused new session shows as "(new session)" only when the directory has no other sessions; otherwise it stays hidden and the cursor starts on the first session. The input box and the hint line stay at the bottom of the screen; `?` (with an empty input box) shows the full help in place of the hint line. Type a message and press `enter` to start a new session with it: the new session becomes the current one (●), works in the background under **Working**, and you stay in the list. An empty "(new session)" placeholder disappears. Slash commands work in this box too: typing `/` shows the matching commands at the bottom, `up`/`down` select a command (the session cursor stays), `tab` or `enter` completes the selected command, and `enter` on a full command closes the list and runs it as in the chat (plain `/resume` stays in the list).
 
 Sessions run in parallel. Open the list or another session while a session works, and it keeps working in the background. The list shows three groups in this order: **Pinned**, **Working**, and **Recent**. A session that works shows under **Working** with a live indicator, and goes back to its own group and place when it finishes; a session that waits for your approval shows **⚠ needs input** and keeps waiting until you open it. The status bar of the session you are in counts the other sessions that work or wait. Quitting mga stops and saves every session.
 
@@ -122,11 +122,11 @@ Sessions run in parallel. Open the list or another session while a session works
 | `↑` / `↓` | Select |
 | type + `enter` | Start a new session with that message (it works in the background) |
 | `shift+↑` / `shift+↓` | Move the session up or down within its group (Pinned or Recent). After a move in Recent, those sessions keep their places; sessions without a place, such as new ones, show at the top. |
-| `→` / `enter` | Open the session, or the agent's live log (`←` goes back) |
+| `→` / `enter` | Open the session |
 | `ctrl+f` | Search sessions by name. Type to filter; the other keys keep working; `esc` clears the search. |
 | `ctrl+r` | Rename the session |
 | `ctrl+t` | Pin or unpin the session. Pinned sessions stay on top in their own group. |
-| `ctrl+x` | Stop a running agent. On a session, press it twice in a row to delete the session. On a finished agent, remove it from the list. |
+| `ctrl+x` | Stop a working session. Press it twice in a row to delete the session. |
 | `esc` | Close the help, clear the search or the input box, or go back to the current session |
 | `?` | With an empty input box, show these keys at the bottom in place of the hint line (any key closes them) |
 

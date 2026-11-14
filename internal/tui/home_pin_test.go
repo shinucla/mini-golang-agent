@@ -9,7 +9,6 @@ import (
 
 	"github.com/shinucla/mini-golang-agent/internal/agent"
 	"github.com/shinucla/mini-golang-agent/internal/config"
-	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
 func listOrder(app *App) []string {
@@ -61,18 +60,6 @@ func TestPinSessions(t *testing.T) {
 	app.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
 	if got := listOrder(app); got[len(got)-1] != "oldest work" || strings.Contains(ansi.Strip(app.View()), "Pinned") {
 		t.Fatalf("unpin must restore the order and drop the groups: %v", got)
-	}
-
-	app.rt.RegisterProvider("fake", echoProvider{})
-	if _, err := app.rt.Spawn(t.Context(), tools.SpawnRequest{AgentType: "Explore", Prompt: "x", Description: "an agent"}); err != nil {
-		t.Fatal(err)
-	}
-	for range 10 {
-		app.Update(tea.KeyMsg{Type: tea.KeyDown})
-	}
-	app.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
-	if !strings.Contains(ansi.Strip(app.View()), "Only sessions can be pinned") {
-		t.Fatal("pinning an agent must explain why it does nothing")
 	}
 
 	typeText(app, "?")

@@ -373,24 +373,16 @@ func TestHomeViewOpensRenamesAndDeletesSessions(t *testing.T) {
 	}
 }
 
-func TestHomeViewShowsAgentLog(t *testing.T) {
+func TestSessionListShowsNoAgents(t *testing.T) {
 	app := newTestApp(t)
 	app.rt.RegisterProvider("fake", echoProvider{})
 	if _, err := app.rt.Spawn(context.Background(), tools.SpawnRequest{AgentType: "Explore", Description: "look around", Prompt: "hello"}); err != nil {
 		t.Fatal(err)
 	}
 	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	if !strings.Contains(app.View(), "look around") {
-		t.Fatalf("agent not listed:\n%s", app.View())
-	}
-	app.Update(tea.KeyMsg{Type: tea.KeyDown})
-	app.Update(tea.KeyMsg{Type: tea.KeyRight})
-	if app.home.task == nil || !strings.Contains(app.View(), "echo: hello") {
-		t.Fatalf("agent log not shown:\n%s", app.View())
-	}
-	app.Update(tea.KeyMsg{Type: tea.KeyLeft})
-	if app.home.task != nil || app.view != viewHome {
-		t.Fatal("left must return from the agent log to the list")
+	view := ansi.Strip(app.View())
+	if strings.Contains(view, "look around") || strings.Contains(view, "sub-agents") {
+		t.Fatalf("the session list shows sessions only; /tasks shows the agents:\n%s", view)
 	}
 }
 

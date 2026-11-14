@@ -30,7 +30,6 @@ const (
 
 type homeItem struct {
 	session *agent.Session
-	task    agent.Task
 }
 
 func (i homeItem) isSession() bool { return i.session != nil }
@@ -42,7 +41,6 @@ type homeView struct {
 	renaming    bool
 	armedDelete string
 	nameInput   textinput.Model
-	task        *agentsView
 	showKeys    bool
 	searching   bool
 	search      textinput.Model
@@ -53,12 +51,12 @@ type homeView struct {
 var homeKeys = [][2]string{
 	{"↑ ↓", "move the cursor"},
 	{"shift+↑ ↓", "move the session up or down within its group (Pinned or Recent)"},
-	{"→  enter", "open the session, or the agent's live log"},
+	{"→  enter", "open the session"},
 	{"type + enter", "start a new session with that message; it works in the background"},
 	{"ctrl+f", "search sessions by name; esc clears the search"},
 	{"ctrl+r", "rename the session"},
 	{"ctrl+t", "pin or unpin the session; pinned sessions stay on top"},
-	{"ctrl+x", "stop a running agent; press twice on a session to delete it; remove a finished agent"},
+	{"ctrl+x", "stop a working session; press twice to delete the session"},
 	{"esc", "close this help, clear the search or the input, or go back"},
 	{"?", "show this help (when the input is empty)"},
 }
@@ -241,21 +239,11 @@ func (h *homeView) items(a *App) []homeItem {
 			items = append(items, homeItem{session: s})
 		}
 	}
-	for _, t := range a.rt.Tasks.Snapshot() {
-		items = append(items, homeItem{task: t})
-	}
 	return items
 }
 
 func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
-	if h.task != nil {
-		cmd := h.task.update(a, msg)
-		if h.task.mode != modeTaskDetail {
-			h.task = nil
-		}
-		return cmd
-	}
 	items := h.items(a)
 	h.cursor = min(h.cursor, max(len(items)-1, 0))
 	var selected homeItem
@@ -324,7 +312,6 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		}
 	case "shift+up", "shift+down":
 		if !selected.isSession() {
-			h.err = "Only sessions can be moved."
 			return nil
 		}
 		step := 1
@@ -344,7 +331,6 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "ctrl+r":
 		if !selected.isSession() {
-			h.err = "Only sessions can be renamed."
 			return nil
 		}
 		h.nameInput = textinput.New()
@@ -357,7 +343,6 @@ func (h *homeView) update(a *App, msg tea.KeyMsg) tea.Cmd {
 		return h.nameInput.Focus()
 	case "ctrl+t":
 		if !selected.isSession() {
-			h.err = "Only sessions can be pinned."
 			return nil
 		}
 		h.togglePin(a, selected.session)
@@ -449,14 +434,6 @@ func (h *homeView) startNew(a *App, typed, prompt string) tea.Cmd {
 
 func (h *homeView) cut(a *App, item homeItem, armed string) {
 	if !item.isSession() {
-		switch {
-		case item.task.ID == "":
-		case item.task.Status == agent.TaskRunning:
-			a.rt.Tasks.Stop(item.task.ID)
-		default:
-			a.rt.Tasks.Remove(item.task.ID)
-			h.cursor = min(h.cursor, max(len(h.items(a))-1, 0))
-		}
 		return
 	}
 	s := item.session
@@ -503,10 +480,6 @@ func (h *homeView) updateRename(a *App, msg tea.KeyMsg, selected homeItem) tea.C
 
 func (h *homeView) open(a *App, item homeItem) tea.Cmd {
 	if !item.isSession() {
-		if item.task.ID == "" {
-			return nil
-		}
-		h.task = &agentsView{tab: tabRunning, mode: modeTaskDetail, taskID: item.task.ID}
 		return nil
 	}
 	if item.session.ID == a.session.ID {
@@ -587,13 +560,7 @@ func (h *homeView) view(a *App) string {
 		bottom = strings.Join(a.suggestionLines(), "\n")
 	}
 	height := max(a.height-lipgloss.Height(box)-lipgloss.Height(bottom), 6)
-	var panel string
-	if h.task != nil {
-		panel = stylePanel.Width(width).Height(height - 2).MaxHeight(height).Render(h.task.taskDetailView(a))
-	} else {
-		panel = h.list(a, width, height)
-	}
-	return panel + "\n" + box + "\n" + bottom
+	return h.list(a, width, height) + "\n" + box + "\n" + bottom
 }
 
 func (a *App) homeHeader(width int) []string {
@@ -616,31 +583,22 @@ func (a *App) homeHeader(width int) []string {
 func (h *homeView) list(a *App, width, height int) string {
 	items := h.items(a)
 	h.cursor = min(h.cursor, max(len(items)-1, 0))
-	lines := a.homeHeader(width - 2)
-	headerLines := len(lines)
-	sessionRows := 0
-	for _, item := range items {
-		if item.isSession() {
-			sessionRows++
-		}
+	top := append(a.homeHeader(width-2), "")
+	if h.searching && len(items) == 0 {
+		top = append(top, styleDim.Render("No session name matches."))
 	}
-	lines = append(lines, "")
-	if h.searching && sessionRows == 0 {
-		lines = append(lines, styleDim.Render("No session name matches."))
-	}
-	bottomLines := 0
-	switch {
-	case h.renaming:
-		bottomLines = 3
-	case h.searching:
-		bottomLines = 3
-	}
-	start, end := window(len(items), h.cursor, max(height-13-headerLines-bottomLines, 3))
+	rows, cursorRow := h.rows(a, items)
+	bottom := h.bottomLines(len(items))
+	room := max(height-2-len(top)-len(bottom), 1)
+	start, end := window(len(rows), cursorRow, room)
+	lines := append(append(top, rows[start:end]...), bottom...)
+	return stylePanel.Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(lines, "\n"))
+}
+
+func (h *homeView) rows(a *App, items []homeItem) ([]string, int) {
 	grouped := slices.ContainsFunc(h.sessions, func(s *agent.Session) bool { return a.rank(s) != 2 })
 	group := func(item homeItem) string {
 		switch {
-		case !item.isSession():
-			return "Agents"
 		case a.rank(item.session) == 0:
 			return "Pinned"
 		case a.rank(item.session) == 1:
@@ -650,47 +608,46 @@ func (h *homeView) list(a *App, width, height int) string {
 		}
 		return ""
 	}
-	previous := ""
-	for i := start; i < end; i++ {
-		item := items[i]
+	var rows []string
+	cursorRow, previous := 0, ""
+	for i, item := range items {
 		if g := group(item); g != previous {
 			previous = g
-			if headerLines+1 < len(lines) {
-				lines = append(lines, "")
+			if 0 < len(rows) {
+				rows = append(rows, "")
 			}
 			switch g {
-			case "Agents":
-				lines = append(lines, styleBold.Render("Agents")+styleDim.Render("  sub-agents of this run"))
 			case "Working":
-				lines = append(lines, a.spin.View()+" "+styleAccent.Render("Working")+styleDim.Render("  sessions with a turn in progress"))
+				rows = append(rows, a.spin.View()+" "+styleAccent.Render("Working")+styleDim.Render("  sessions with a turn in progress"))
 			case "Pinned":
-				lines = append(lines, styleAccent.Render("Pinned"))
+				rows = append(rows, styleAccent.Render("Pinned"))
 			case "Recent":
-				lines = append(lines, styleBold.Render("Recent"))
+				rows = append(rows, styleBold.Render("Recent"))
 			}
 		}
-		lines = append(lines, cursorLine(i == h.cursor, clip(h.row(a, item), a.width-8)))
+		if i == h.cursor {
+			cursorRow = len(rows)
+		}
+		rows = append(rows, cursorLine(i == h.cursor, clip(h.row(a, item), a.width-8)))
 	}
-	if sessionRows == len(items) {
-		lines = append(lines, "", styleBold.Render("Agents"), styleDim.Render("  No sub-agents in this run."))
-	}
-	if h.renaming {
-		lines = append(lines, "", h.nameInput.View(), styleDim.Render("enter save · esc cancel"))
-	}
-	if h.searching {
-		lines = append(lines, "", h.search.View()+styleDim.Render(fmt.Sprintf("  %d of %d sessions", sessionRows, len(h.sessions))), styleDim.Render("esc cancel"))
-	}
+	return rows, cursorRow
+}
+
+func (h *homeView) bottomLines(matches int) []string {
+	var lines []string
 	if h.err != "" {
 		lines = append(lines, styleErr.Render(h.err))
 	}
-	return stylePanel.Width(width).Height(height - 2).MaxHeight(height).Render(strings.Join(lines, "\n"))
+	switch {
+	case h.renaming:
+		lines = append(lines, "", h.nameInput.View(), styleDim.Render("enter save · esc cancel"))
+	case h.searching:
+		lines = append(lines, "", h.search.View()+styleDim.Render(fmt.Sprintf("  %d of %d sessions", matches, len(h.sessions))), styleDim.Render("esc cancel"))
+	}
+	return lines
 }
 
 func (h *homeView) row(a *App, item homeItem) string {
-	if !item.isSession() {
-		t := item.task
-		return fmt.Sprintf("%-4s %s %-18s %6s  ", t.ID, statusIcon(a, t.Status), clip(t.Agent, 18), t.Elapsed()) + styleDim.Render(t.Description)
-	}
 	s := item.session
 	marker := "  "
 	if s.ID == a.session.ID {

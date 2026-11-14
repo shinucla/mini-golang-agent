@@ -9,7 +9,6 @@ import (
 
 	"github.com/shinucla/mini-golang-agent/internal/agent"
 	"github.com/shinucla/mini-golang-agent/internal/config"
-	"github.com/shinucla/mini-golang-agent/internal/tools"
 )
 
 func TestSessionSearchDeleteAndKeys(t *testing.T) {
@@ -76,18 +75,6 @@ func TestSessionSearchDeleteAndKeys(t *testing.T) {
 	app.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
 	if _, err := agent.LoadSession(config.SessionsDir(), target.ID); err == nil {
 		t.Fatal("two ctrl+x presses in a row must delete the session")
-	}
-
-	app.rt.RegisterProvider("fake", echoProvider{})
-	if _, err := app.rt.Spawn(t.Context(), tools.SpawnRequest{AgentType: "Explore", Prompt: "x", Description: "finished agent"}); err != nil {
-		t.Fatal(err)
-	}
-	for range 10 {
-		app.Update(tea.KeyMsg{Type: tea.KeyDown})
-	}
-	app.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
-	if len(app.rt.Tasks.Snapshot()) != 0 {
-		t.Fatal("ctrl+x on a finished agent must remove it from the list")
 	}
 
 	app.Update(tea.KeyMsg{Type: tea.KeyEsc})

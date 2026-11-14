@@ -18,7 +18,7 @@ func TestSessionListKeyPanel(t *testing.T) {
 
 	typeText(app, "?")
 	view := ansi.Strip(app.View())
-	for _, want := range []string{"Session list keys", "rename the session", "start a new session", "press twice on a session to delete it", "stop a running agent", "search sessions by name"} {
+	for _, want := range []string{"Session list keys", "rename the session", "start a new session", "press twice to delete the session", "stop a working session", "search sessions by name"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("key panel misses %q:\n%s", want, view)
 		}
